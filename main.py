@@ -6,7 +6,21 @@ import numpy as np
 from PIL import Image
 import io
 from deepface import DeepFace
+# Add this near the top of your file, after imports
+import tensorflow as tf
+print("TensorFlow version:", tf.__version__)
+print("Num GPUs Available:", len(tf.config.list_physical_devices('GPU')))
+print("GPU Devices:", tf.config.list_physical_devices('GPU'))
 
+# Configure memory growth to avoid TensorFlow taking all GPU memory
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("Memory growth enabled")
+    except RuntimeError as e:
+        print(f"Error setting memory growth: {e}")
 app = FastAPI()
 
 @app.post("/compare-fr")
@@ -75,7 +89,7 @@ async def verify_faces(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid current image file")
     
-    # Convert images to numpy arrays (DeepFace accepts both file paths and numpy arrays)
+    # Convert images to numpy arrays
     profile_np = np.array(profile_image)
     current_np = np.array(current_image)
     
@@ -94,7 +108,16 @@ async def verify_faces(
 
     try:
         result = DeepFace.verify(**verify_params)
+        
+        # Convert NumPy types to standard Python types
+        converted_result = {}
+        for key, value in result.items():
+            if isinstance(value, (np.generic)):
+                converted_result[key] = value.item()
+            else:
+                converted_result[key] = value
+        
+        return converted_result
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-    return result

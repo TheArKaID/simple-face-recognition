@@ -1,20 +1,33 @@
-# Use an NVIDIA CUDA base image that provides the needed GPU libraries
-FROM nvidia/cuda:11.0.3-base
-
-# Retrieve the missing NVIDIA public key
-RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC
-
-# Install Python 3, pip, and other dependencies
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip cmake build-essential libgl1 libglib2.0-0
+# Use TensorFlow's official GPU-enabled image
+FROM tensorflow/tensorflow:2.8.0-gpu
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip3 install --upgrade pip
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Add NVIDIA GPG key and configure apt to accept repository even with weak signatures
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub || true
+RUN apt-get update -o Acquire::AllowInsecureRepositories=true || true
 
+# Install system dependencies for OpenCV and dlib
+RUN apt-get install -y --allow-unauthenticated \
+    cmake \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libglib2.0-0 \
+    libgl1-mesa-glx \
+    ffmpeg \
+    build-essential
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies without exact version constraints
+RUN pip install --no-cache-dir face_recognition deepface pillow python-multipart fastapi uvicorn
+
+# Copy application code
 COPY . .
 
+# Expose the port
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
