@@ -1,6 +1,6 @@
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 import face_recognition
 import numpy as np
 from PIL import Image

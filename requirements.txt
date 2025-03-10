@@ -1,6 +1,8 @@
 fastapi
-uvicorn
+tensorflow
 face_recognition
 numpy
 pillow
 deepface
+python-multipart
+uvicorn
