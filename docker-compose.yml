@@ -7,3 +7,7 @@ services:
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - deepface_weights:/root/.deepface/weights
+volumes:
+  deepface_weights:
