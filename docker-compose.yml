@@ -1,5 +1,6 @@
 services:
   app:
+    image: face-recognition-api:latest
     build: .
     ports:
       - "8000:8000"
