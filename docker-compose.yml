@@ -1,6 +1,6 @@
 services:
   app:
-    image: face-recognition-api:latest
+    image: adminmeetaza/prime-face-recognizer:latest
     build: .
     ports:
       - "8000:8000"
