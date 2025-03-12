@@ -1,4 +1,3 @@
-import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -6,6 +5,7 @@ import face_recognition
 import numpy as np
 from PIL import Image
 import io
+import os
 from deepface import DeepFace
 import tensorflow as tf
 print("TensorFlow version:", tf.__version__)
@@ -41,8 +41,40 @@ async def validation_exception_handler(request, exc):
         }
     )
 
-# Pre-build and store the model globally to avoid rebuilding in each request
-_ = DeepFace.build_model("VGG-Face")
+# Function to pre-load DeepFace models using local test images
+def preload_deepface_model():
+    print("Pre-loading DeepFace models...")
+    try:
+        # Build the model explicitly
+        _ = DeepFace.build_model("VGG-Face")
+        
+        # Optionally, perform a test verification with dummy images
+        # Get the current directory where main.py is located
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        dummy1_path = os.path.join(current_dir, "dummy1.jpg")
+        dummy2_path = os.path.join(current_dir, "dummy2.jpg")
+        
+        # Check if the dummy files exist
+        if os.path.exists(dummy1_path) and os.path.exists(dummy2_path):
+            print(f"Using test images: {dummy1_path} and {dummy2_path}")
+            
+            # Perform test verification to ensure everything is loaded
+            result = DeepFace.verify(
+                img1_path=dummy1_path, 
+                img2_path=dummy2_path,
+                model_name="VGG-Face",
+                detector_backend="dlib",
+                distance_metric="cosine",
+                enforce_detection=True
+            )
+            print("Model pre-loading complete with test verification")
+        else:
+            print("Dummy image files not found, model built without verification test")
+    except Exception as e:
+        print(f"Error pre-loading model: {e}")
+
+# Call the preload function at startup
+preload_deepface_model()
 
 @app.post("/compare-fr")
 async def compare_faces(
@@ -151,5 +183,3 @@ async def verify_faces(
             "message": "Face verification failed",
             "errors": str(e)
         }
-
-_ = verify_faces("dummy.jpg", "dummy.jpg")
