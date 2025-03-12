@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import face_recognition
@@ -6,6 +6,9 @@ import numpy as np
 from PIL import Image
 import io
 import os
+import base64
+from pydantic import BaseModel
+from typing import Optional
 from deepface import DeepFace
 import tensorflow as tf
 print("TensorFlow version:", tf.__version__)
@@ -40,6 +43,31 @@ async def validation_exception_handler(request, exc):
             "errors": errors
         }
     )
+
+# Pydantic model for base64 image input
+class FaceComparisonRequest(BaseModel):
+    reference_image: str  # Base64 encoded image
+    target_image: str     # Base64 encoded image
+    model_name: Optional[str] = "VGG-Face"
+    detector_backend: Optional[str] = "dlib"
+    distance_metric: Optional[str] = "cosine"
+    threshold: Optional[float] = None
+
+# Helper function to decode base64 to image
+def decode_base64_to_image(base64_string):
+    try:
+        # Check if the string has a data URL prefix (e.g., "data:image/jpeg;base64,")
+        if "," in base64_string:
+            base64_string = base64_string.split(",", 1)[1]
+        
+        # Decode the base64 string
+        image_data = base64.b64decode(base64_string)
+        
+        # Open as image
+        image = Image.open(io.BytesIO(image_data)).convert("RGB")
+        return image
+    except Exception as e:
+        raise ValueError(f"Invalid base64 image: {str(e)}")
 
 # Function to pre-load DeepFace models using local test images
 def preload_deepface_model():
@@ -78,32 +106,47 @@ preload_deepface_model()
 
 @app.post("/compare-fr")
 async def compare_faces(
-    reference_file: UploadFile = File(...),
-    target_file: UploadFile = File(...)
-):
+        request: FaceComparisonRequest
+    ):
     try:
-        # Load the reference image from the request
-        ref_data = await reference_file.read()
+        # Decode the reference image
         try:
-            profile_image = Image.open(io.BytesIO(ref_data)).convert("RGB")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid reference image file")
+            profile_image = decode_base64_to_image(request.reference_image)
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": "Invalid reference image",
+                "errors": str(e)
+            }
+        
         profile_array = np.array(profile_image)
         profile_encodings = face_recognition.face_encodings(profile_array)
         if not profile_encodings:
-            raise HTTPException(status_code=400, detail="No face found in reference image")
+            return {
+                "status": "error",
+                "message": "No face found in reference image",
+                "errors": "Unable to detect faces in the reference image"
+            }
         profile_encoding = profile_encodings[0]
 
-        # Load the target image from the request
-        curr_data = await target_file.read()
+        # Decode the target image
         try:
-            current_image = Image.open(io.BytesIO(curr_data)).convert("RGB")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid target image file")
+            current_image = decode_base64_to_image(request.target_image)
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": "Invalid target image",
+                "errors": str(e)
+            }
+        
         current_array = np.array(current_image)
         current_encodings = face_recognition.face_encodings(current_array)
         if not current_encodings:
-            raise HTTPException(status_code=400, detail="No face found in target image")
+            return {
+                "status": "error",
+                "message": "No face found in target image",
+                "errors": "Unable to detect faces in the target image"
+            }
         current_encoding = current_encodings[0]
 
         # Compare the face from the reference to the target face
@@ -128,27 +171,28 @@ async def compare_faces(
 
 @app.post("/compare-df")
 async def verify_faces(
-    reference_file: UploadFile = File(...),
-    target_file: UploadFile = File(...),
-    model_name: str = Form("VGG-Face"),         # Options include VGG-Face, Facenet, OpenFace, DeepFace, etc.
-    detector_backend: str = Form("dlib"),       # Options include opencv, mtcnn, etc.
-    distance_metric: str = Form("cosine"),        # Options include cosine, euclidean, euclidean_l2
-    threshold: float = Form(None)                 # Optional: custom threshold value, e.g., 0.4 or 10
+    request: FaceComparisonRequest
 ):
     try:
-        # Load and convert the reference image
+        # Decode the reference image
         try:
-            ref_bytes = await reference_file.read()
-            profile_image = Image.open(io.BytesIO(ref_bytes)).convert("RGB")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid reference image file")
+            profile_image = decode_base64_to_image(request.reference_image)
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": "Invalid reference image",
+                "errors": str(e)
+            }
         
-        # Load and convert the target image
+        # Decode the target image
         try:
-            curr_bytes = await target_file.read()
-            current_image = Image.open(io.BytesIO(curr_bytes)).convert("RGB")
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid target image file")
+            current_image = decode_base64_to_image(request.target_image)
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": "Invalid target image",
+                "errors": str(e)
+            }
         
         # Convert images to numpy arrays
         profile_np = np.array(profile_image)
@@ -158,14 +202,14 @@ async def verify_faces(
         verify_params = {
             "img1_path": profile_np,
             "img2_path": current_np,
-            "model_name": model_name,
-            "detector_backend": detector_backend,
-            "distance_metric": distance_metric,
+            "model_name": request.model_name,
+            "detector_backend": request.detector_backend,
+            "distance_metric": request.distance_metric,
             "enforce_detection": True
         }
         
-        if threshold is not None:
-            verify_params["threshold"] = threshold
+        if request.threshold is not None:
+            verify_params["threshold"] = request.threshold
 
         result = DeepFace.verify(**verify_params)
         # Return uniform JSON response
