@@ -1,5 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 import face_recognition
 import numpy as np
 from PIL import Image
@@ -20,6 +22,24 @@ if gpus:
     except RuntimeError as e:
         print(f"Error setting memory growth: {e}")
 app = FastAPI()
+
+# Add custom exception handler for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    errors = []
+    for error in exc.errors():
+        error_msg = error.get("msg", "")
+        error_loc = " -> ".join(str(loc) for loc in error.get("loc", []))
+        errors.append(f"{error_loc}: {error_msg}")
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "status": "error",
+            "message": "Validation error",
+            "errors": errors
+        }
+    )
 
 # Pre-build and store the model globally to avoid rebuilding in each request
 _ = DeepFace.build_model("VGG-Face")
@@ -131,3 +151,5 @@ async def verify_faces(
             "message": "Face verification failed",
             "errors": str(e)
         }
+
+_ = verify_faces("dummy.jpg", "dummy.jpg")
