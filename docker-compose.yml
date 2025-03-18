@@ -4,9 +4,6 @@ services:
     build: .
     ports:
       - "8000:8000"
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - deepface_weights:/root/.deepface/weights
 volumes:

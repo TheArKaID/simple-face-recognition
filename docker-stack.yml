@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  app:
+    image: adminmeetaza/prime-face-recognizer:latest
+    ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - deepface_weights:/root/.deepface/weights
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "3"
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+volumes:
+  deepface_weights:
+    driver: local
+    # ...existing volume configuration...
