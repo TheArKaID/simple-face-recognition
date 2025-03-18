@@ -1,6 +1,6 @@
 # Face Recognition with Docker Swarm
 docker swarm init
-docker stack deploy -c docker-compose.yml face_recognition_swarm
+docker stack deploy -c docker-stack.yml face_recognition_swarm
 docker service ls
 docker ps
 
