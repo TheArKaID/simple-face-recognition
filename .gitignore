@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+# Local face template store
+data/
+*.db
+*.db-wal
+*.db-shm

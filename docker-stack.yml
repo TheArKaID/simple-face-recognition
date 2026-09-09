@@ -8,19 +8,28 @@ services:
         published: 8000
         protocol: tcp
         mode: ingress
+    environment:
+      - FACE_DB_PATH=/data/faces.db
     volumes:
       - deepface_weights:/root/.deepface/weights
+      # Every replica must see the SAME template store, otherwise an employee
+      # enrolled through one replica is unknown to the other three.  A local
+      # driver only shares within one node - a multi-node swarm needs a shared
+      # volume (NFS/CIFS) or an external database instead.
+      - face_db:/data
     deploy:
-      replicas: 1
+      replicas: 4
       resources:
         limits:
-          cpus: "3"
-          memory: 4G
+          cpus: "2"
+          memory: 3G
       restart_policy:
         condition: on-failure
         max_attempts: 3
 
 volumes:
+  face_db:
+    driver: local
   deepface_weights:
     driver: local
     # ...existing volume configuration...

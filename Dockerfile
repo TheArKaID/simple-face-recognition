@@ -27,6 +27,10 @@ RUN pip install --no-cache-dir face_recognition deepface pillow python-multipart
 # Copy application code
 COPY . .
 
+# Face templates live outside the image so they survive a redeploy.
+ENV FACE_DB_PATH=/data/faces.db
+RUN mkdir -p /data
+
 # Expose the port
 EXPOSE 8000
 
