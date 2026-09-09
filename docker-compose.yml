@@ -4,7 +4,9 @@ services:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      - FACE_DB_PATH=/data/faces.db
     volumes:
-      - deepface_weights:/root/.deepface/weights
+      - face_db:/data
 volumes:
-  deepface_weights:
+  face_db:

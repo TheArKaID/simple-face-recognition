@@ -11,7 +11,6 @@ services:
     environment:
       - FACE_DB_PATH=/data/faces.db
     volumes:
-      - deepface_weights:/root/.deepface/weights
       # Every replica must see the SAME template store, otherwise an employee
       # enrolled through one replica is unknown to the other three.  A local
       # driver only shares within one node - a multi-node swarm needs a shared
@@ -30,6 +29,3 @@ services:
 volumes:
   face_db:
     driver: local
-  deepface_weights:
-    driver: local
-    # ...existing volume configuration...

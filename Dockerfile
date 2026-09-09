@@ -1,37 +1,43 @@
-# Use TensorFlow's official GPU-enabled image
-FROM tensorflow/tensorflow:2.8.0-gpu
+# dlib is the only native dependency left, so it is compiled once in a builder
+# stage and the toolchain is left behind.  The previous tensorflow:2.8.0-gpu
+# base existed solely for DeepFace; nothing in the service uses TensorFlow now.
+FROM python:3.11-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+
+FROM python:3.11-slim
+
+# Runtime halves of what dlib was linked against.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libopenblas0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Add NVIDIA GPG key and configure apt to accept repository even with weak signatures
-RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub || true
-RUN apt-get update -o Acquire::AllowInsecureRepositories=true || true
-
-# Install system dependencies for OpenCV and dlib
-RUN apt-get install -y --allow-unauthenticated \
-    cmake \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libglib2.0-0 \
-    libgl1-mesa-glx \
-    ffmpeg \
-    build-essential
-
-# Copy requirements file
+COPY --from=builder /wheels /wheels
 COPY requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
 
-# Install Python dependencies without exact version constraints
-RUN pip install --no-cache-dir face_recognition deepface pillow python-multipart fastapi uvicorn
-
-# Copy application code
 COPY . .
 
 # Face templates live outside the image so they survive a redeploy.
 ENV FACE_DB_PATH=/data/faces.db
 RUN mkdir -p /data
 
-# Expose the port
 EXPOSE 8000
 
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"
+
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
