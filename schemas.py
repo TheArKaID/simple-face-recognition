@@ -9,13 +9,15 @@ from pydantic import BaseModel
 
 
 class FaceComparisonRequest(BaseModel):
-    """Legacy two-image payload used by /compare-fr and /compare-df."""
+    """Legacy two-image payload used by /compare-fr.
+
+    The DeepFace-only knobs (model_name, detector_backend, distance_metric) are
+    gone.  An HRIS still sending them is unaffected: pydantic ignores unknown
+    fields by default.
+    """
 
     reference_image: str  # Base64 encoded image
     target_image: str     # Base64 encoded image
-    model_name: Optional[str] = "VGG-Face"
-    detector_backend: Optional[str] = "dlib"
-    distance_metric: Optional[str] = "cosine"
     threshold: Optional[float] = None
 
 

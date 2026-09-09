@@ -1,30 +1,12 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-import numpy as np
-import os
-from deepface import DeepFace
-import tensorflow as tf
-
 import config
 import engine
 import matcher
 from schemas import EnrollRequest, FaceComparisonRequest, VerifyRequest
 from store import TemplateStore
 
-print("TensorFlow version:", tf.__version__)
-print("Num GPUs Available:", len(tf.config.list_physical_devices('GPU')))
-print("GPU Devices:", tf.config.list_physical_devices('GPU'))
-
-# Configure memory growth to avoid TensorFlow taking all GPU memory
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print("Memory growth enabled")
-    except RuntimeError as e:
-        print(f"Error setting memory growth: {e}")
 app = FastAPI()
 
 store = TemplateStore()
@@ -47,45 +29,6 @@ async def validation_exception_handler(request, exc):
             "errors": errors
         }
     )
-
-# Helper function to decode base64 to image
-def decode_base64_to_image(base64_string):
-    return engine.decode_base64_image(base64_string)
-
-# Function to pre-load DeepFace models using local test images
-def preload_deepface_model():
-    print("Pre-loading DeepFace models...")
-    try:
-        # Build the model explicitly
-        _ = DeepFace.build_model("VGG-Face")
-
-        # Optionally, perform a test verification with dummy images
-        # Get the current directory where main.py is located
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        dummy1_path = os.path.join(current_dir, "dummy1.jpg")
-        dummy2_path = os.path.join(current_dir, "dummy2.jpg")
-
-        # Check if the dummy files exist
-        if os.path.exists(dummy1_path) and os.path.exists(dummy2_path):
-            print(f"Using test images: {dummy1_path} and {dummy2_path}")
-
-            # Perform test verification to ensure everything is loaded
-            result = DeepFace.verify(
-                img1_path=dummy1_path,
-                img2_path=dummy2_path,
-                model_name="VGG-Face",
-                detector_backend="dlib",
-                distance_metric="cosine",
-                enforce_detection=True
-            )
-            print("Model pre-loading complete with test verification")
-        else:
-            print("Dummy image files not found, model built without verification test")
-    except Exception as e:
-        print(f"Error pre-loading model: {e}")
-
-# Call the preload function at startup
-preload_deepface_model()
 
 def _error(status_code, message, reason, detail=None):
     return JSONResponse(
@@ -339,64 +282,5 @@ def compare_faces(
         return {
             "status": "error",
             "message": "Face recognition failed",
-            "errors": str(e)
-        }
-
-@app.post("/compare-df")
-async def verify_faces(
-    request: FaceComparisonRequest
-):
-    try:
-        # Decode the reference image
-        try:
-            profile_image = decode_base64_to_image(request.reference_image)
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": "Invalid reference image",
-                "errors": str(e)
-            }
-
-        # Decode the target image
-        try:
-            current_image = decode_base64_to_image(request.target_image)
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": "Invalid target image",
-                "errors": str(e)
-            }
-        
-        # Convert images to numpy arrays
-        profile_np = np.array(profile_image)
-        current_np = np.array(current_image)
-
-        # Prepare parameters including the pre-built model to bypass repeated building
-        verify_params = {
-            "img1_path": profile_np,
-            "img2_path": current_np,
-            "model_name": request.model_name,
-            "detector_backend": request.detector_backend,
-            "distance_metric": request.distance_metric,
-            "enforce_detection": True
-        }
-
-        if request.threshold is not None:
-            verify_params["threshold"] = request.threshold
-
-        result = DeepFace.verify(**verify_params)
-        # Return uniform JSON response
-        return {
-            "status": "success",
-            "message": "Face verification successful",
-            "data": {
-                "match": bool(result.get("verified")),
-                "distance": float(result.get("distance"))
-            }
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": "Face verification failed",
             "errors": str(e)
         }

@@ -1,7 +1,7 @@
 """Drive the FastAPI surface end to end.
 
-TensorFlow/DeepFace/dlib cannot be installed here, so they are stubbed; the
-routing, request schemas and response bodies exercised below are the real ones.
+dlib cannot be installed here, so the recogniser is stubbed; the routing,
+request schemas and response bodies exercised below are the real ones.
 The fake recogniser returns a vector chosen per image so identity scenarios can
 be scripted precisely.
 """
@@ -19,22 +19,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["FACE_DB_PATH"] = os.path.join(tempfile.mkdtemp(), "api.db")
 
 # --- stubs -------------------------------------------------------------------
-tf = types.ModuleType("tensorflow")
-tf.__version__ = "stub"
-tf.config = types.SimpleNamespace(
-    list_physical_devices=lambda kind: [],
-    experimental=types.SimpleNamespace(set_memory_growth=lambda *a: None),
-)
-sys.modules["tensorflow"] = tf
-
-deepface = types.ModuleType("deepface")
-deepface.DeepFace = types.SimpleNamespace(
-    build_model=lambda name: None,
-    verify=lambda **kw: {"verified": True, "distance": 0.1},
-)
-sys.modules["deepface"] = deepface
-sys.modules["deepface.DeepFace"] = deepface
-
 VECTORS = {}          # image tag -> embedding
 BOXES = {"n": 1}
 
