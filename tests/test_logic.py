@@ -151,9 +151,9 @@ d = matcher.verify(index, BUD, vec(1, 0.30))
 check("close genuine accepted", d.decision == "accept", f"{d.decision} dist={d.distance:.3f}")
 check("accepted match flag", d.match and not d.requires_review)
 
-# borderline: inside the review band
-probe = vec(1) + (vec(1, 1.0) - vec(1)) * 0.0  # placeholder, replaced below
-target_d = 0.48
+# borderline: inside the review band.  Derived from config rather than
+# hardcoded, so retuning the thresholds does not break the test.
+target_d = (config.ACCEPT_MAX_DISTANCE + config.REVIEW_MAX_DISTANCE) / 2
 direction = np.random.default_rng(7).normal(size=128).astype(np.float32)
 direction /= np.linalg.norm(direction)
 d = matcher.verify(index, BUD, vec(1) + direction * target_d)
@@ -161,7 +161,7 @@ check("borderline goes to review", d.decision == "review", f"{d.decision} dist={
 check("review still counts as match", d.match and d.requires_review)
 check("review reason reported", "borderline_distance" in d.reasons, str(d.reasons))
 
-d = matcher.verify(index, BUD, vec(1) + direction * 0.9)
+d = matcher.verify(index, BUD, vec(1) + direction * (config.REVIEW_MAX_DISTANCE + 0.4))
 check("far probe rejected", d.decision == "reject", f"{d.decision} dist={d.distance:.3f}")
 check("rejected match flag false", not d.match)
 check("reject reason reported", "below_threshold" in d.reasons, str(d.reasons))

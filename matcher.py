@@ -80,8 +80,10 @@ def verify(index, employee_id: str, probe: np.ndarray) -> Decision:
 
     all_distances = engine.distances(index.matrix, probe)
 
-    # Best of the employee's own templates - multiple enrolment photos raise the
-    # genuine score without raising anyone else's.
+    # Best of the employee's own templates.  Enrolling more photos lowers this
+    # distance - but it also lowers the runner-up distance for everyone probing
+    # against this employee, so the net effect on the margin is a question for
+    # tests/calibrate.py, not an assumption.
     distance = float(all_distances[claimed_mask].min())
 
     other_distances = all_distances[~claimed_mask]

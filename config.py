@@ -23,8 +23,15 @@ def _bool(name, default):
 # distance <= ACCEPT_MAX_DISTANCE            -> accept
 # ACCEPT_MAX_DISTANCE < d <= REVIEW_MAX      -> review (accepted, flagged)
 # distance > REVIEW_MAX_DISTANCE             -> reject
-ACCEPT_MAX_DISTANCE = _float("FACE_ACCEPT_MAX_DISTANCE", 0.45)
-REVIEW_MAX_DISTANCE = _float("FACE_REVIEW_MAX_DISTANCE", 0.52)
+#
+# Measured on tests/images (6 identities, 12 photos): genuine pairs ran
+# 0.092-0.484, impostor pairs 0.601-1.076.  Accept sits just above the worst
+# genuine pair, review just below the closest impostor pair.  Six identities is
+# far too small a sample to settle these - retune from the production
+# verify_log, where the closest impostor pair will be much closer than 0.601
+# simply because there are vastly more pairs to draw from.
+ACCEPT_MAX_DISTANCE = _float("FACE_ACCEPT_MAX_DISTANCE", 0.50)
+REVIEW_MAX_DISTANCE = _float("FACE_REVIEW_MAX_DISTANCE", 0.56)
 
 # Tolerance for the legacy /compare-fr endpoint (was face_recognition's 0.6).
 LEGACY_TOLERANCE = _float("FACE_LEGACY_TOLERANCE", 0.50)
