@@ -86,7 +86,7 @@ def _load():
             if _sessions is None:
                 import onnxruntime
 
-                opts = ["CPUExecutionProvider"]
+                providers = ["CPUExecutionProvider"]
                 det_path = os.path.join(MODEL_DIR, DET_MODEL)
                 rec_path = os.path.join(MODEL_DIR, REC_MODEL)
                 for path in (det_path, rec_path):
@@ -94,8 +94,21 @@ def _load():
                         raise FaceError(
                             "model_missing", f"ArcFace weights not found: {path}"
                         )
-                det = onnxruntime.InferenceSession(det_path, providers=opts)
-                rec = onnxruntime.InferenceSession(rec_path, providers=opts)
+                # Bound the thread pool: onnxruntime sizes it from the host cpu
+                # count, which several replicas under a cgroup cpu limit will
+                # oversubscribe badly.  inter_op stays at 1 because one request
+                # runs one model at a time - concurrency comes from the request
+                # threadpool and from the replicas themselves.
+                opts = onnxruntime.SessionOptions()
+                if config.ONNX_INTRA_OP_THREADS:
+                    opts.intra_op_num_threads = config.ONNX_INTRA_OP_THREADS
+                    opts.inter_op_num_threads = 1
+                det = onnxruntime.InferenceSession(
+                    det_path, sess_options=opts, providers=providers
+                )
+                rec = onnxruntime.InferenceSession(
+                    rec_path, sess_options=opts, providers=providers
+                )
                 _sessions = (
                     det,
                     [o.name for o in det.get_outputs()],

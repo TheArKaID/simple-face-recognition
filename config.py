@@ -72,6 +72,15 @@ if FACE_ENGINE not in _ENGINE_THRESHOLDS:
     )
 _T = _ENGINE_THRESHOLDS[FACE_ENGINE]
 
+# onnxruntime sizes its intra-op thread pool from the HOST cpu count, not from
+# the cgroup limit, so four Swarm replicas each capped at cpus: "2" would each
+# open a pool for every core on the box and then fight over 8 CPU-equivalents.
+# That does not corrupt anything, it just thrashes - and it thrashes hardest
+# under exactly the morning attendance load it needs to survive.  Keep this in
+# step with docker-stack.yml's cpus limit; 0 hands the decision back to
+# onnxruntime.
+ONNX_INTRA_OP_THREADS = _int("FACE_ONNX_THREADS", 2)
+
 # --- Decision thresholds -----------------------------------------------------
 # distance <= ACCEPT_MAX_DISTANCE            -> accept
 # ACCEPT_MAX_DISTANCE < d <= REVIEW_MAX      -> review (accepted, flagged)

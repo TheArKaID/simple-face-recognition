@@ -190,8 +190,24 @@ class TemplateStore:
             return removed
 
     def log_verification(self, **fields) -> None:
+        """Record one attempt for later threshold calibration.
+
+        Never raises.  Every /verify writes a row, so four replicas during a
+        morning attendance rush contend on the same file - and a row that fails
+        to land must not turn a correct verification into a 500.  The log exists
+        to retune thresholds, not to decide anything, so losing one is a
+        strictly smaller problem than refusing an employee who is who they say
+        they are.
+        """
         if not config.LOG_VERIFICATIONS:
             return
+        try:
+            self._log_verification(**fields)
+        except Exception as exc:              # noqa: BLE001 - deliberately broad
+            print(f"verify_log write failed ({type(exc).__name__}: {exc}); "
+                  f"continuing - the decision itself is unaffected")
+
+    def _log_verification(self, **fields) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO verify_log "

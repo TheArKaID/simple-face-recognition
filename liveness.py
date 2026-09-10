@@ -90,10 +90,16 @@ def _load():
                     _sessions = []
                     return _sessions
 
+                # Same thread bound as the recogniser; see
+                # config.ONNX_INTRA_OP_THREADS.
+                opts = onnxruntime.SessionOptions()
+                if config.ONNX_INTRA_OP_THREADS:
+                    opts.intra_op_num_threads = config.ONNX_INTRA_OP_THREADS
+                    opts.inter_op_num_threads = 1
                 loaded = []
                 for path, scale in _model_files():
                     session = onnxruntime.InferenceSession(
-                        path, providers=["CPUExecutionProvider"]
+                        path, sess_options=opts, providers=["CPUExecutionProvider"]
                     )
                     loaded.append((session, scale, os.path.basename(path)))
                 _sessions = loaded
