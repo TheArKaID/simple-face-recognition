@@ -1,6 +1,14 @@
+# Active engine is chosen at runtime with FACE_ENGINE; both backends' deps are
+# installed so the two can be compared without rebuilding.
 face_recognition==1.3.0
 numpy<2
 pillow>=9.0.0
 fastapi
 uvicorn[standard]
 python-multipart
+
+# engines/insightface_backend.py.  Heavy (scipy, scikit-image, albumentations
+# come along); if ArcFace wins the comparison, the follow-up is to drive the
+# ONNX files with onnxruntime alone and drop this tree.
+insightface==0.7.3
+onnxruntime==1.19.2

@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 COPY requirements.txt .
+# insightface still builds through a legacy setup.py that expects these to be
+# importable already, so they go in before the wheel pass.
+RUN pip install --no-cache-dir "cython<3" "numpy<2"
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 
@@ -28,6 +31,10 @@ COPY --from=builder /wheels /wheels
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels
+
+# Bake the ArcFace weights in.  Left to first use, four Swarm replicas would
+# each fetch ~300MB on the same cold start.
+RUN python -c "from insightface.app import FaceAnalysis;     FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'],                  allowed_modules=['detection','recognition']).prepare(ctx_id=-1, det_size=(640,640))"
 
 COPY . .
 
