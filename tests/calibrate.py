@@ -455,21 +455,35 @@ else:
     own = frozen.get(engine.ENGINE_ID)
     if own:
         print(f"=== regression check against baseline_{engine.ENGINE_ID}.json ===")
-        drift = []
+        # Scale-free metrics must match exactly - they are computed from the
+        # whole distribution and are insensitive to float32 rounding.  Raw
+        # distances are stored to 4dp, so +/-0.0001 there is the smallest
+        # representable step and says nothing; a swap of engine implementation
+        # will produce it.  Anything larger is worth investigating.
+        QUANTUM = 0.00015
+        exact_drift, noise = [], []
+        scale_free_keys = {key for key, _, _ in SCALE_FREE}
         for key, label, higher_better in SCALE_FREE + SCALE_BOUND:
             was, now = own.get(key), baseline.get(key)
             if was is None or now is None:
                 continue
             delta = now - was
-            if abs(delta) > 1e-6:
-                drift.append((label, was, now, delta))
-        if drift:
-            print("  metrics moved since the baseline was frozen:")
-            for label, was, now, delta in drift:
+            if abs(delta) <= 1e-9:
+                continue
+            if key in scale_free_keys or abs(delta) > QUANTUM:
+                exact_drift.append((label, was, now, delta))
+            else:
+                noise.append((label, was, now, delta))
+        if exact_drift:
+            print("  MOVED - worth investigating:")
+            for label, was, now, delta in exact_drift:
                 print(f"    {label:<24}{was:>10.4f} -> {now:>10.4f}   {delta:+.4f}")
-            print("  a refactor that changes nothing should show no drift here")
-        else:
-            print("  identical to the frozen baseline - no behavioural drift")
+        if noise:
+            print(f"  within 4dp rounding ({QUANTUM}), i.e. float32 noise:")
+            for label, was, now, delta in noise:
+                print(f"    {label:<24}{was:>10.4f} -> {now:>10.4f}   {delta:+.4f}")
+        if not exact_drift:
+            print("  no behavioural drift: every scale-free metric is identical")
 
     others = {k: v for k, v in frozen.items() if k != engine.ENGINE_ID}
     for other_id, other in others.items():

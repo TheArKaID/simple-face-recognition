@@ -1,14 +1,16 @@
-# Active engine is chosen at runtime with FACE_ENGINE; both backends' deps are
-# installed so the two can be compared without rebuilding.
+# Active engine is chosen at runtime with FACE_ENGINE.
+#
+# "arcface-onnx" is the ArcFace path: engines/arcface_onnx.py drives the
+# buffalo_l ONNX files through onnxruntime directly.  The insightface package
+# is deliberately absent - it pulls scipy, scikit-image, scikit-learn,
+# albumentations and matplotlib to do work that file does in numpy, and those
+# accounted for roughly 1.2GB of image.  tools/compare_backends.py proves the
+# two produce the same embeddings, so stored templates are unaffected.
 face_recognition==1.3.0
 numpy<2
 pillow>=9.0.0
+opencv-python-headless
+onnxruntime==1.19.2
 fastapi
 uvicorn[standard]
 python-multipart
-
-# engines/insightface_backend.py.  Heavy (scipy, scikit-image, albumentations
-# come along); if ArcFace wins the comparison, the follow-up is to drive the
-# ONNX files with onnxruntime alone and drop this tree.
-insightface==0.7.3
-onnxruntime==1.19.2

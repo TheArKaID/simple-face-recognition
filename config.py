@@ -41,6 +41,8 @@ _ENGINE_THRESHOLDS = {
     # above the worst genuine with room, review below the closest impostor with
     # room, so the measured gap stays available as headroom for harder faces.
     "insightface": {"accept": 0.55, "review": 0.64, "margin": 0.10, "blur": 10.0},
+    # Same weights, same vector space, so the same numbers apply.
+    "arcface-onnx": {"accept": 0.55, "review": 0.64, "margin": 0.10, "blur": 10.0},
 }
 _T = _ENGINE_THRESHOLDS.get(FACE_ENGINE, _ENGINE_THRESHOLDS["dlib"])
 

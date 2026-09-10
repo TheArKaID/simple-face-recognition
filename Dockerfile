@@ -1,20 +1,32 @@
-# dlib is the only native dependency left, so it is compiled once in a builder
-# stage and the toolchain is left behind.  The previous tensorflow:2.8.0-gpu
-# base existed solely for DeepFace; nothing in the service uses TensorFlow now.
+# dlib is the only thing that still needs compiling, so it is built in a
+# throwaway stage and the toolchain left behind.  Nothing here needs
+# TensorFlow, CUDA, or the insightface package: engines/arcface_onnx.py drives
+# the ArcFace weights through onnxruntime directly, which is what keeps this
+# image around 700MB instead of 2.15GB.
 FROM python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
         libopenblas-dev \
+        curl \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 COPY requirements.txt .
-# insightface still builds through a legacy setup.py that expects these to be
-# importable already, so they go in before the wheel pass.
-RUN pip install --no-cache-dir "cython<3" "numpy<2"
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+# Two files out of the buffalo_l pack.  Fetching them here rather than at first
+# use matters for Swarm: four replicas on a cold start would otherwise each
+# pull ~300MB at once.  The other three models in the pack - 3D landmarks, 2D
+# landmarks, age/gender - are never loaded, so they are not extracted.
+RUN mkdir -p /models/arcface \
+    && curl -fsSL -o /tmp/buffalo_l.zip \
+        https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip \
+    && unzip -j /tmp/buffalo_l.zip '*det_10g.onnx' '*w600k_r50.onnx' -d /models/arcface \
+    && rm /tmp/buffalo_l.zip \
+    && ls -l /models/arcface
 
 
 FROM python:3.11-slim
@@ -29,12 +41,21 @@ WORKDIR /app
 
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
+# onnxruntime declares sympy (and its mpmath) as a hard dependency but only
+# reaches for them in shape-inference and transformer tooling, never in
+# InferenceSession.  Verified by loading w600k_r50 and running a forward pass
+# with both gone: ~100MB of image for no loss of function.
+#
+# These comments sit ABOVE the RUN on purpose.  A '#' line inside a backslash
+# continuation ends the instruction and silently discards the rest - an
+# earlier version put them mid-chain and the uninstall never ran, while the
+# build still reported success.
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
-    && rm -rf /wheels
+    && rm -rf /wheels \
+    && pip uninstall -y sympy mpmath \
+    && find /usr/local/lib/python3.11/site-packages -name __pycache__ -type d -exec rm -rf {} + || true
 
-# Bake the ArcFace weights in.  Left to first use, four Swarm replicas would
-# each fetch ~300MB on the same cold start.
-RUN python -c "from insightface.app import FaceAnalysis;     FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'],                  allowed_modules=['detection','recognition']).prepare(ctx_id=-1, det_size=(640,640))"
+COPY --from=builder /models/arcface /app/models/arcface
 
 COPY . .
 
