@@ -3,6 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import config
 import engine
+import liveness
 import matcher
 from schemas import EnrollRequest, FaceComparisonRequest, VerifyRequest
 from store import TemplateStore
@@ -49,6 +50,12 @@ def health():
         "message": "Service healthy",
         "data": {
             "store": store.stats(),
+            "liveness": {
+                "mode": config.LIVENESS_MODE,
+                "available": liveness.available(),
+                "min_score": config.LIVENESS_MIN_SCORE,
+                "required": config.LIVENESS_REQUIRED,
+            },
             "thresholds": {
                 "accept_max_distance": config.ACCEPT_MAX_DISTANCE,
                 "review_max_distance": config.REVIEW_MAX_DISTANCE,
@@ -162,6 +169,31 @@ def verify(request: VerifyRequest):
         )
         return _error(422, "Attendance image unusable", exc.reason, exc.detail)
 
+    # Liveness before identity: a photo of the right person is still a photo.
+    live = liveness.check(probe.image, probe.bbox)
+    if config.LIVENESS_MODE == "model":
+        if live is None:
+            if config.LIVENESS_REQUIRED:
+                store.log_verification(
+                    tenant_id=request.tenant_id, employee_id=request.employee_id,
+                    source="verify", decision="reject", reasons=["liveness_unavailable"],
+                )
+                return _error(
+                    503, "Liveness check is enabled but unavailable",
+                    "liveness_unavailable",
+                    "No usable weights in FACE_LIVENESS_MODEL_DIR",
+                )
+        elif not live.is_live:
+            store.log_verification(
+                tenant_id=request.tenant_id, employee_id=request.employee_id,
+                source="verify", decision="reject", reasons=["spoof_suspected"],
+                quality={**probe.quality(), "liveness": live.public_data()},
+            )
+            return _error(
+                422, "Liveness check failed", "spoof_suspected",
+                f"Liveness score {live.score:.3f} below {config.LIVENESS_MIN_SCORE}",
+            )
+
     # Migration convenience: enrol from the profile photo on first sight.
     if request.reference_image and store.template_count(
         request.tenant_id, request.employee_id
@@ -189,7 +221,8 @@ def verify(request: VerifyRequest):
         runner_up_distance=decision.runner_up_distance,
         margin=decision.margin,
         reasons=decision.reasons,
-        quality=probe.quality(),
+        quality={**probe.quality(),
+                 **({"liveness": live.public_data()} if live else {})},
     )
 
     if "not_enrolled" in decision.reasons:
@@ -202,6 +235,7 @@ def verify(request: VerifyRequest):
 
     data = decision.public_data()
     data["quality"] = probe.quality()
+    data["liveness"] = live.public_data() if live else None
     return {
         "status": "success",
         "message": "Face verification successful",

@@ -78,6 +78,8 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
     return FaceResult(
         embedding=np.asarray(encodings[0], dtype=np.float32),
         others=[np.asarray(e, dtype=np.float32) for e in encodings[1:]],
+        bbox=(top, right, bottom, left),
+        image=image,
         faces_found=faces_found,
         face_pixels=int(face_pixels),
         blur_variance=blur_variance,

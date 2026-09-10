@@ -98,6 +98,26 @@ PRIMARY_FACE_DOMINANCE = _float("FACE_PRIMARY_DOMINANCE", 1.8)
 # changes in the two ways intended: stricter tolerance, and multi-face refusal.
 LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 
+# --- Liveness / presentation-attack detection --------------------------------
+# "off"   - not assessed at all
+# "model" - run the MiniFASNet weights in LIVENESS_MODEL_DIR
+#
+# Default is off, and deliberately so: the check is worth nothing until it has
+# been measured against real spoof samples, and a security control that has
+# never been measured invites more trust than it earns.  See
+# tools/measure_liveness.py, then set the mode and the threshold from its output.
+LIVENESS_MODE = os.getenv("FACE_LIVENESS_MODE", "off").strip().lower()
+LIVENESS_MODEL_DIR = os.getenv(
+    "FACE_LIVENESS_MODEL_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "liveness"),
+)
+# Placeholder until calibrated - do NOT treat this as a tuned value.
+LIVENESS_MIN_SCORE = _float("FACE_LIVENESS_MIN_SCORE", 0.55)
+# When the mode asks for the model but it cannot run, fail closed rather than
+# waving the request through: having asked for liveness and silently not got it
+# is the worst of the three outcomes.
+LIVENESS_REQUIRED = _bool("FACE_LIVENESS_REQUIRED", True)
+
 # --- Storage -----------------------------------------------------------------
 DB_PATH = os.getenv(
     "FACE_DB_PATH",

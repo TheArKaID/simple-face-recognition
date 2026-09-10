@@ -30,6 +30,8 @@ class FaceError(ValueError):
 class FaceResult:
     embedding: np.ndarray          # the subject: the largest face in frame
     others: list                   # every other face's embedding, for cross-checking
+    bbox: tuple                    # subject box (top, right, bottom, left); liveness needs it
+    image: object                  # the downscaled PIL image the box refers to
     faces_found: int
     face_pixels: int
     blur_variance: float
