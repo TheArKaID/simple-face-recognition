@@ -28,6 +28,7 @@ from engines.common import (
     apply_quality_gates,
     crop_metrics,
     downscale,
+    select_subject,
 )
 
 ENGINE_ID = "insightface-buffalo-l"
@@ -78,14 +79,13 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
         raise FaceError("no_face", "No face detected in the image")
 
     faces_found = len(faces)
-    if faces_found > 1 and not config.ALLOW_MULTIPLE_FACES:
-        raise FaceError("multiple_faces", f"{faces_found} faces detected; expected exactly one")
 
-    def area(face):
-        x1, y1, x2, y2 = face.bbox
+    def area(f):
+        x1, y1, x2, y2 = f.bbox
         return (x2 - x1) * (y2 - y1)
 
-    face = max(faces, key=area)
+    primary_i, other_i = select_subject([area(f) for f in faces])
+    face = faces[primary_i]
 
     x1, y1, x2, y2 = (int(v) for v in face.bbox)
     # Clamp: SCRFD boxes can extend past the frame on faces near an edge.
@@ -109,8 +109,16 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
     if embedding is None:
         raise FaceError("encoding_failed", "Face detected but no embedding was produced")
 
+    # app.get() already embedded every face it found, so bystanders come free.
+    others = [
+        np.asarray(faces[i].normed_embedding, dtype=np.float32)
+        for i in other_i
+        if getattr(faces[i], "normed_embedding", None) is not None
+    ]
+
     return FaceResult(
         embedding=np.asarray(embedding, dtype=np.float32),
+        others=others,
         faces_found=faces_found,
         face_pixels=int(face_pixels),
         blur_variance=blur_variance,

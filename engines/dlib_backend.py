@@ -20,15 +20,16 @@ from engines.common import (
     apply_quality_gates,
     crop_metrics,
     downscale,
+    select_subject,
 )
 
 ENGINE_ID = "dlib-resnet-v1"
 EMBEDDING_DIM = 128
 
 
-def _largest(boxes: List[Tuple[int, int, int, int]]) -> Tuple[int, int, int, int]:
-    # boxes are (top, right, bottom, left)
-    return max(boxes, key=lambda b: (b[2] - b[0]) * (b[1] - b[3]))
+def _area(box: Tuple[int, int, int, int]) -> int:
+    top, right, bottom, left = box
+    return (bottom - top) * (right - left)
 
 
 def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
@@ -47,13 +48,12 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
         raise FaceError("no_face", "No face detected in the image")
 
     faces_found = len(boxes)
-    if faces_found > 1 and not config.ALLOW_MULTIPLE_FACES:
-        # Previously the first detection won by accident.  For an attendance
-        # gate an extra face in frame (a bystander, or a phone held up showing
-        # someone else) has to fail closed rather than be silently picked.
-        raise FaceError("multiple_faces", f"{faces_found} faces detected; expected exactly one")
+    # The original code took whichever detection came first.  select_subject
+    # instead names the largest face as the subject and refuses frames that do
+    # not clearly identify one.
+    primary_i, other_i = select_subject([_area(b) for b in boxes])
 
-    box = _largest(boxes)
+    box = boxes[primary_i]
     top, right, bottom, left = box
     face_pixels = min(bottom - top, right - left)
     blur_variance, brightness = crop_metrics(image, box)
@@ -63,9 +63,12 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
     if quality_gates:
         apply_quality_gates(face_pixels, blur_variance, brightness)
 
+    # One call encodes the subject and any bystanders together, so tolerating
+    # extra faces costs the encoder pass for them and nothing else.
+    wanted = [box] + [boxes[i] for i in other_i]
     encodings = face_recognition.face_encodings(
         array,
-        known_face_locations=[box],
+        known_face_locations=wanted,
         num_jitters=config.NUM_JITTERS,
         model=config.LANDMARK_MODEL,
     )
@@ -74,6 +77,7 @@ def embed(image: Image.Image, quality_gates: bool = True) -> FaceResult:
 
     return FaceResult(
         embedding=np.asarray(encodings[0], dtype=np.float32),
+        others=[np.asarray(e, dtype=np.float32) for e in encodings[1:]],
         faces_found=faces_found,
         face_pixels=int(face_pixels),
         blur_variance=blur_variance,

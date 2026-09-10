@@ -177,7 +177,7 @@ def verify(request: VerifyRequest):
             return _error(422, "Reference image unusable", f"reference_{exc.reason}", exc.detail)
 
     index = store.index(request.tenant_id)
-    decision = matcher.verify(index, request.employee_id, probe.embedding)
+    decision = matcher.verify(index, request.employee_id, probe.embedding, probe.others)
 
     store.log_verification(
         tenant_id=request.tenant_id,
@@ -258,12 +258,27 @@ def compare_faces(
         )
         matched = bool(face_distance <= tolerance)
 
+        # Bystanders are tolerated in the frame, but the subject still has to be
+        # the reference person.  With no roster to consult, the reference image
+        # itself is the yardstick: a bystander closer to it than the subject is
+        # means the reference person is in frame without being the one
+        # presenting - someone holding up their photo, most likely.
+        reason = None
+        for bystander in current.others:
+            if engine.distance(profile.embedding, bystander) < face_distance:
+                matched = False
+                reason = "claimed_face_is_secondary"
+                break
+        if current.others and reason is None:
+            reason = "extra_faces_present"
+
         # Logged so the calibration set starts filling up before the HRIS moves
         # to /verify; these rows are what the thresholds get retuned against.
         store.log_verification(
             source="legacy",
             decision="match" if matched else "no_match",
             distance=face_distance,
+            reasons=[reason] if reason else [],
             quality=current.quality(),
         )
 
@@ -275,6 +290,7 @@ def compare_faces(
                 "match": matched,
                 "distance": float(face_distance),
                 "tolerance": float(tolerance),
+                "reason": reason,
                 "quality": current.quality(),
             }
         }

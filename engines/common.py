@@ -28,7 +28,8 @@ class FaceError(ValueError):
 
 @dataclass
 class FaceResult:
-    embedding: np.ndarray
+    embedding: np.ndarray          # the subject: the largest face in frame
+    others: list                   # every other face's embedding, for cross-checking
     faces_found: int
     face_pixels: int
     blur_variance: float
@@ -37,6 +38,7 @@ class FaceResult:
     def quality(self) -> dict:
         return {
             "faces_found": self.faces_found,
+            "extra_faces": len(self.others),
             "face_pixels": self.face_pixels,
             "blur_variance": round(self.blur_variance, 2),
             "brightness": round(self.brightness, 1),
@@ -103,3 +105,42 @@ def apply_quality_gates(face_pixels: int, blur_variance: float, brightness: floa
         raise FaceError("low_quality_dark", f"Face too dark (brightness {brightness:.0f})")
     if brightness > config.MAX_BRIGHTNESS:
         raise FaceError("low_quality_bright", f"Face overexposed (brightness {brightness:.0f})")
+
+
+def select_subject(areas):
+    """Which detected face to verify, and which are bystanders.
+
+    Returns (primary_index, other_indices).  The subject is the largest face -
+    in a selfie, the person holding the phone.  Raises FaceError when the frame
+    does not clearly identify a subject, rather than picking one arbitrarily as
+    the original code did.
+    """
+    if not areas:
+        raise FaceError("no_face", "No face detected in the image")
+
+    order = sorted(range(len(areas)), key=lambda i: areas[i], reverse=True)
+    primary, rest = order[0], order[1:]
+    extra = len(rest)
+
+    # Order matters: the opt-out is reported as multiple_faces, the original
+    # reason code, so a deployment that never enables bystanders keeps the
+    # error the HRIS already handles.
+    if extra and config.MAX_EXTRA_FACES == 0:
+        raise FaceError(
+            "multiple_faces", f"{len(areas)} faces detected; expected exactly one"
+        )
+    if extra > config.MAX_EXTRA_FACES:
+        raise FaceError(
+            "too_many_faces",
+            f"{len(areas)} faces detected; at most {1 + config.MAX_EXTRA_FACES} allowed",
+        )
+    if extra:
+        runner_up = areas[rest[0]]
+        ratio = areas[primary] / runner_up if runner_up else float("inf")
+        if ratio < config.PRIMARY_FACE_DOMINANCE:
+            raise FaceError(
+                "ambiguous_subject",
+                f"Largest face is only {ratio:.2f}x the next one; "
+                f"{config.PRIMARY_FACE_DOMINANCE}x is required to tell who is presenting",
+            )
+    return primary, rest

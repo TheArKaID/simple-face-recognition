@@ -81,7 +81,19 @@ MIN_FACE_PIXELS = _int("FACE_MIN_FACE_PIXELS", 80)
 MIN_BLUR_VARIANCE = _float("FACE_MIN_BLUR_VARIANCE", _T["blur"])
 MIN_BRIGHTNESS = _float("FACE_MIN_BRIGHTNESS", 40.0)
 MAX_BRIGHTNESS = _float("FACE_MAX_BRIGHTNESS", 225.0)
-ALLOW_MULTIPLE_FACES = _bool("FACE_ALLOW_MULTIPLE_FACES", False)
+# A colleague wandering into frame should not block attendance, but the face
+# that gets verified must still be the one presenting.  The subject is the
+# LARGEST face: in a selfie that is whoever holds the phone, and a bystander
+# behind them is naturally smaller.  Extra faces are tolerated only while the
+# subject clearly dominates - two similarly sized faces mean the frame does not
+# say who is presenting, so it is refused rather than guessed at.
+#
+# Security note: allowing extra faces reopens one attack that a hard refusal
+# closed - holding a phone showing the claimed employee's photo close enough to
+# the camera to become the largest face.  Only liveness detection closes that,
+# so raising MAX_EXTRA_FACES above 0 should go with anti-spoofing.
+MAX_EXTRA_FACES = _int("FACE_MAX_EXTRA_FACES", 2)
+PRIMARY_FACE_DOMINANCE = _float("FACE_PRIMARY_DOMINANCE", 1.8)
 # Off by default on /compare-fr so the endpoint already in production only
 # changes in the two ways intended: stricter tolerance, and multi-face refusal.
 LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)

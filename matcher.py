@@ -65,8 +65,16 @@ def _band(distance: float) -> tuple:
     return "reject", ["below_threshold"]
 
 
-def verify(index, employee_id: str, probe: np.ndarray) -> Decision:
-    """Score `probe` against the claimed employee and every other employee."""
+def verify(index, employee_id: str, probe: np.ndarray, others=()) -> Decision:
+    """Score `probe` against the claimed employee and every other employee.
+
+    `others` holds embeddings of any bystanders who wandered into the frame.
+    They are not candidates for verification - the subject was already chosen as
+    the largest face - but they are evidence: a bystander who matches the
+    claimed employee BETTER than the subject does means the claimed person is in
+    frame without being the one presenting, which is a deliberate attempt rather
+    than an honest mismatch, and is worth rejecting under its own reason code.
+    """
     if index.size == 0:
         return Decision(decision="reject", reasons=["not_enrolled"])
 
@@ -97,6 +105,15 @@ def verify(index, employee_id: str, probe: np.ndarray) -> Decision:
         margin = runner_up_distance - distance
 
     decision, reasons = _band(distance)
+
+    if others:
+        reasons.append("extra_faces_present")
+        claimed_templates = index.matrix[claimed_mask]
+        for bystander in others:
+            if float(engine.distances(claimed_templates, bystander).min()) < distance:
+                decision = "reject"
+                reasons.append("claimed_face_is_secondary")
+                break
 
     if config.CROSS_CHECK_ENABLED and margin is not None and decision != "reject":
         if margin <= 0:
