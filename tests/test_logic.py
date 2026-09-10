@@ -24,7 +24,8 @@ def face_locations(array, number_of_times_to_upsample=1):
 
 
 def face_encodings(array, known_face_locations=None, num_jitters=1, model="large"):
-    return [STATE["vector"]]
+    # One encoding per requested box, so bystander handling can be exercised.
+    return [STATE["vector"]] * len(known_face_locations or [None])
 
 
 FAKE.face_locations = face_locations
@@ -81,12 +82,40 @@ res = engine.embed_base64(IMG)
 check("single face embeds", res.embedding.shape == (128,) and res.faces_found == 1)
 check("quality metrics populated", res.quality()["blur_variance"] > 0 and res.quality()["face_pixels"] == 200)
 
+# A bystander is tolerated while the subject clearly dominates: 200x200 against
+# 110x140 is a 2.6x area ratio, past the 1.8x the policy requires.
+STATE["boxes"] = [(10, 210, 210, 10), (10, 380, 120, 240)]
+res2 = engine.embed_base64(IMG)
+check("bystander tolerated when subject dominates", len(res2.others) == 1, str(len(res2.others)))
+check("subject is the largest face", res2.face_pixels == 200, str(res2.face_pixels))
+check("extra faces reported in quality", res2.quality()["extra_faces"] == 1)
+
+# Two similarly sized faces: the frame does not say who is presenting.
+STATE["boxes"] = [(10, 210, 210, 10), (10, 420, 210, 220)]
+try:
+    engine.embed_base64(IMG)
+    check("similar-sized second face refused", False, "no error raised")
+except engine.FaceError as e:
+    check("similar-sized second face refused", e.reason == "ambiguous_subject", e.reason)
+
+# Opting out entirely restores the old fail-closed behaviour.
+config.MAX_EXTRA_FACES = 0
 STATE["boxes"] = [(10, 210, 210, 10), (10, 380, 120, 240)]
 try:
     engine.embed_base64(IMG)
-    check("two faces refused", False, "no error raised")
+    check("bystander refused when not opted in", False, "no error raised")
 except engine.FaceError as e:
-    check("two faces refused", e.reason == "multiple_faces", e.reason)
+    check("bystander refused when not opted in", e.reason == "multiple_faces", e.reason)
+config.MAX_EXTRA_FACES = 2
+
+# More bystanders than allowed.
+STATE["boxes"] = [(10, 210, 210, 10), (10, 380, 120, 240),
+                  (250, 380, 340, 300), (250, 200, 330, 130)]
+try:
+    engine.embed_base64(IMG)
+    check("too many faces refused", False, "no error raised")
+except engine.FaceError as e:
+    check("too many faces refused", e.reason == "too_many_faces", e.reason)
 
 STATE["boxes"] = [(10, 50, 50, 10)]  # 40px face
 try:

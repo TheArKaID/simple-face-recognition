@@ -38,7 +38,9 @@ def face_locations(array, number_of_times_to_upsample=1):
 
 
 def face_encodings(array, known_face_locations=None, num_jitters=1, model="large"):
-    return [VECTORS[_tag_of(array)]]
+    # One encoding per requested box; bystanders reuse the same vector, which is
+    # enough to exercise the plumbing.
+    return [VECTORS[_tag_of(array)]] * len(known_face_locations or [None])
 
 
 fr.face_locations = face_locations
@@ -163,11 +165,25 @@ r = client.post("/verify", json={"tenant_id": "PT-ABC", "employee_id": "EMP-BUDI
 check("bad image -> 422", r.status_code == 422)
 check("bad image reason", r.json()["reason"] == "invalid_image")
 
+# A bystander in frame no longer blocks attendance: the subject is the largest
+# face, and the stub's second box is small enough to stay a bystander.
 BOXES["n"] = 2
 r = client.post("/verify", json={"tenant_id": "PT-ABC", "employee_id": "EMP-BUDI",
                                  "image": BUDI_SELFIE})
-check("two faces in frame -> 422", r.status_code == 422, str(r.status_code))
-check("multiple_faces reason", r.json()["reason"] == "multiple_faces", r.text[:140])
+body = r.json().get("data", {})
+check("bystander in frame still verifies", r.status_code == 200, r.text[:160])
+check("extra face reported", body.get("quality", {}).get("extra_faces") == 1, r.text[:200])
+check("extra_faces_present flagged", "extra_faces_present" in body.get("reasons", []),
+      str(body.get("reasons")))
+
+# With bystanders switched off, the original fail-closed error comes back.
+import config as _cfg
+_cfg.MAX_EXTRA_FACES = 0
+r = client.post("/verify", json={"tenant_id": "PT-ABC", "employee_id": "EMP-BUDI",
+                                 "image": BUDI_SELFIE})
+check("opt-out restores 422", r.status_code == 422, str(r.status_code))
+check("multiple_faces reason", r.json().get("reason") == "multiple_faces", r.text[:140])
+_cfg.MAX_EXTRA_FACES = 2
 BOXES["n"] = 1
 
 r = client.post("/verify", json={"tenant_id": "PT-OTHER", "employee_id": "EMP-BUDI",
@@ -207,9 +223,20 @@ r = client.post("/compare-fr", json={"reference_image": "bad", "target_image": B
 check("legacy error stays HTTP 200", r.status_code == 200, str(r.status_code))
 check("legacy error envelope unchanged", r.json()["status"] == "error" and "errors" in r.json())
 
+# The legacy endpoint follows the same policy, since production still calls it.
 BOXES["n"] = 2
 r = client.post("/compare-fr", json={"reference_image": BUDI_PROFILE, "target_image": BUDI_SELFIE})
-check("legacy refuses multi-face", r.json()["status"] == "error" and r.json()["reason"] == "multiple_faces", r.text[:140])
+body = r.json()["data"]
+check("legacy tolerates a bystander", body["match"] is True, r.text[:200])
+check("legacy reports the extra face", body["reason"] == "extra_faces_present", str(body["reason"]))
+check("legacy counts the extra face", body["quality"]["extra_faces"] == 1)
+
+import config as _c
+_c.MAX_EXTRA_FACES = 0
+r = client.post("/compare-fr", json={"reference_image": BUDI_PROFILE, "target_image": BUDI_SELFIE})
+check("legacy opt-out refuses multi-face",
+      r.json()["status"] == "error" and r.json()["reason"] == "multiple_faces", r.text[:140])
+_c.MAX_EXTRA_FACES = 2
 BOXES["n"] = 1
 
 print("\n== calibration log ==")
