@@ -46,6 +46,7 @@ if not liveness.available():
     sys.exit(2)
 
 spoof_files = sorted(glob.glob(os.path.join(SPOOF, "*.jpg")) +
+                     glob.glob(os.path.join(SPOOF, "*.jpeg")) +
                      glob.glob(os.path.join(SPOOF, "*.png")))
 if not spoof_files:
     print(f"""

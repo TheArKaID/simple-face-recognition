@@ -33,6 +33,9 @@ FAKE.face_encodings = face_encodings
 sys.modules["face_recognition"] = FAKE
 
 DB = os.path.join(tempfile.mkdtemp(), "test.db")
+# Liveness is covered by tools/measure_liveness.py and test_api.py;
+# these suites stub the recogniser and test the identity path.
+os.environ["FACE_LIVENESS_MODE"] = "off"
 os.environ["FACE_DB_PATH"] = DB
 
 import config           # noqa: E402

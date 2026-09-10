@@ -26,6 +26,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -51,8 +52,20 @@ _lock = threading.Lock()
 
 
 def available() -> bool:
-    """True when weights are present and the mode asks for the model."""
-    return config.LIVENESS_MODE == "model" and bool(_model_files())
+    """True when the mode asks for the model AND it can actually run.
+
+    Checks the runtime too, not just the files: an image built without
+    onnxruntime would otherwise report itself ready and then fail per-request.
+    Reporting unavailability here lets LIVENESS_REQUIRED fail the request
+    closed, which is the honest outcome.
+    """
+    if config.LIVENESS_MODE != "model" or not _model_files():
+        return False
+    try:
+        import onnxruntime  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def _model_files():
@@ -71,7 +84,11 @@ def _load():
     if _sessions is None:
         with _lock:
             if _sessions is None:
-                import onnxruntime
+                try:
+                    import onnxruntime
+                except Exception:
+                    _sessions = []
+                    return _sessions
 
                 loaded = []
                 for path, scale in _model_files():
@@ -96,8 +113,11 @@ def _crop(image: Image.Image, bbox, scale: float) -> np.ndarray:
         and the 80x80 resize squashes it - the model was trained that way
       * a box running past the frame edge is SHIFTED back inside, not padded,
         so the crop never contains invented pixels
-      * pixels are divided by 255, because upstream passes the crop through
-        torchvision ToTensor() before the model sees it
+      * pixels stay in 0-255.  Upstream's `trans.ToTensor` is its own class in
+        src/data_io/transform.py, NOT torchvision's, and it does not rescale -
+        the tensor reaching the model has min 24 and max 255.  Dividing by 255
+        on the assumption it was torchvision made the model return the same
+        logits for every image; that mistake cost most of a debugging session.
     """
     top, right, bottom, left = bbox
     src_w, src_h = image.width, image.height
@@ -126,9 +146,14 @@ def _crop(image: Image.Image, bbox, scale: float) -> np.ndarray:
         rb_y = src_h - 1
 
     # Upstream slices inclusively, so the far edge is +1 here.
-    patch = image.crop((int(lt_x), int(lt_y), int(rb_x) + 1, int(rb_y) + 1))
-    arr = np.asarray(patch.resize((80, 80), Image.BILINEAR), dtype=np.float32)
-    arr = arr[:, :, ::-1] / 255.0          # RGB -> BGR, and ToTensor's scaling
+    patch = np.asarray(image)[int(lt_y):int(rb_y) + 1, int(lt_x):int(rb_x) + 1]
+    # cv2.INTER_LINEAR, not PIL's BILINEAR.  Pillow antialiases when it shrinks,
+    # and shrinking a ~700px crop to 80px that way smooths away exactly the
+    # high-frequency texture - moire, screen pixel structure - that this model
+    # keys on.  With PIL the output was constant to three decimal places across
+    # live faces and screen photos alike; with cv2 it separates them.
+    patch = cv2.resize(patch, (80, 80), interpolation=cv2.INTER_LINEAR)
+    arr = patch[:, :, ::-1].astype(np.float32)           # RGB -> BGR, no rescaling
     return np.ascontiguousarray(arr.transpose(2, 0, 1)[None, ...])
 
 

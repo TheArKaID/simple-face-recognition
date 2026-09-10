@@ -102,17 +102,22 @@ LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 # "off"   - not assessed at all
 # "model" - run the MiniFASNet weights in LIVENESS_MODEL_DIR
 #
-# Default is off, and deliberately so: the check is worth nothing until it has
-# been measured against real spoof samples, and a security control that has
-# never been measured invites more trust than it earns.  See
-# tools/measure_liveness.py, then set the mode and the threshold from its output.
-LIVENESS_MODE = os.getenv("FACE_LIVENESS_MODE", "off").strip().lower()
+# Measured on tests/images against tests/images/spoof (69 live faces, 9 screen
+# photos): live scores ran 0.551-1.000, spoofs 0.000-0.000056, ROC AUC 1.0000.
+# On the strength of that it defaults to on - see tools/measure_liveness.py to
+# re-measure after any change to the crop, the detector or the weights.
+LIVENESS_MODE = os.getenv("FACE_LIVENESS_MODE", "model").strip().lower()
 LIVENESS_MODEL_DIR = os.getenv(
     "FACE_LIVENESS_MODEL_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "liveness"),
 )
-# Placeholder until calibrated - do NOT treat this as a tuned value.
-LIVENESS_MIN_SCORE = _float("FACE_LIVENESS_MIN_SCORE", 0.55)
+# Chosen from the measured gap, not from the EER: spoofs scored at most 0.00006
+# while the hardest live face scored 0.551, so this sits well clear of both,
+# with the headroom deliberately on the genuine side.  A refused live employee
+# retakes a photo; an accepted spoof records attendance that never happened, so
+# the two errors are not worth the same - but with spoofs this far from the
+# boundary there is no need to crowd the live faces to catch them.
+LIVENESS_MIN_SCORE = _float("FACE_LIVENESS_MIN_SCORE", 0.35)
 # When the mode asks for the model but it cannot run, fail closed rather than
 # waving the request through: having asked for liveness and silently not got it
 # is the worst of the three outcomes.

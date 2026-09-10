@@ -53,6 +53,13 @@ for name in sorted(os.listdir(weights_dir)):
     dummy = torch.randn(1, 3, h_input, w_input)
     with torch.no_grad():
         reference = model(dummy)
+        # Two different inputs must give different outputs.  Comparing the
+        # export against the torch model cannot catch a model that ignores its
+        # input - both come out identically constant and the check passes.  An
+        # earlier version of this script shipped exactly that: weights that
+        # returned the same logits for zeros, ones and noise alike.
+        other = model(torch.zeros(1, 3, h_input, w_input))
+        spread = float((reference - other).abs().max())
 
     out_path = os.path.join(OUT, name.replace(".pth", ".onnx"))
     torch.onnx.export(
@@ -76,5 +83,7 @@ for name in sorted(os.listdir(weights_dir)):
     print(f"{name}")
     print(f"  type {model_type}  input {h_input}x{w_input}  crop scale {scale}")
     print(f"  output shape {tuple(reference.shape)}")
+    print(f"  responds to input: max |noise - zeros| = {spread:.4f}  "
+          f"{'OK' if spread > 0.5 else 'DEAD - weights did not take effect'}")
     print(f"  onnx vs torch max abs diff {delta:.3e}  {'OK' if delta < 1e-4 else 'MISMATCH'}")
     print(f"  wrote {out_path} ({os.path.getsize(out_path)/1024:.0f} KB)")
