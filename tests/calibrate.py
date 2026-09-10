@@ -23,7 +23,9 @@ Three things come out of this:
      with it switched off
 """
 import glob
+import hashlib
 import itertools
+import json
 import os
 import re
 import statistics
@@ -42,6 +44,12 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
 # The repo owner confirmed z is the same person as y.
 ALIASES = {"z": "y"}
 
+# A controlled cross-engine comparison has to score both engines on the SAME
+# photos.  Each engine refuses a different set, so the caller runs once per
+# engine to learn what each can embed, intersects the two lists, and passes the
+# intersection back in here.
+ONLY = {s for s in os.getenv("FACE_CALIB_ONLY", "").split(",") if s}
+
 
 def identity_of(stem):
     prefix = re.sub(r"\d+$", "", stem)
@@ -49,9 +57,30 @@ def identity_of(stem):
 
 
 # --- embed every photo once --------------------------------------------------
-embeddings, identity, quality, unusable = {}, {}, {}, []
+# Byte-identical duplicates would contribute a genuine pair at distance zero and
+# an extra template that adds nothing, flattering whichever engine is measured.
+seen_hashes, duplicates = {}, []
+paths = []
 for path in sorted(glob.glob(os.path.join(IMAGE_DIR, "*.jpg"))):
+    with open(path, "rb") as fh:
+        digest = hashlib.sha256(fh.read()).hexdigest()
+    first = seen_hashes.get(digest)
+    if first:
+        duplicates.append((os.path.basename(path), os.path.basename(first)))
+        continue
+    seen_hashes[digest] = path
+    paths.append(path)
+
+if duplicates:
+    print(f"skipped {len(duplicates)} byte-identical duplicate photos:")
+    for dup, original in duplicates:
+        print(f"  {dup} is a copy of {original}")
+
+embeddings, identity, quality, unusable = {}, {}, {}, []
+for path in paths:
     stem = os.path.splitext(os.path.basename(path))[0]
+    if ONLY and stem not in ONLY:
+        continue
     try:
         result = engine.embed(Image.open(path))
         embeddings[stem] = result.embedding
@@ -270,3 +299,203 @@ for label, key in [("genuine attempts", "genuine_n"),
                    ("impostor attempts", "impostor_n"),
                    ("  falsely accepted", "false_accepts")]:
     print(f"  {label:<34}{single[key]:>12}{multi[key]:>12}")
+
+
+# --- scale-free metrics, so two engines can be compared ---------------------
+# dlib measures Euclidean distance over 128 dimensions, ArcFace cosine distance
+# over 512: the raw numbers are not comparable, and FAR/FRR are already zero on
+# this dataset, so neither settles whether a new engine is better.  These
+# metrics do - they read the whole distribution rather than one operating point.
+print("")
+print("=== scale-free metrics ===")
+
+
+def roc_auc(gen, imp):
+    """P(a random impostor scores farther than a random genuine pair).
+
+    Mann-Whitney U, so no sklearn dependency.  1.0 is perfect separation,
+    0.5 is chance.
+    """
+    merged = sorted([(v, 0) for v in gen] + [(v, 1) for v in imp])
+    rank_sum, i = 0.0, 0
+    while i < len(merged):
+        j = i
+        while j < len(merged) and merged[j][0] == merged[i][0]:
+            j += 1
+        avg_rank = (i + j + 1) / 2          # 1-based average rank for the tie group
+        rank_sum += sum(avg_rank for k in range(i, j) if merged[k][1] == 0)
+        i = j
+    n_g, n_i = len(gen), len(imp)
+    u = rank_sum - n_g * (n_g + 1) / 2      # U for the genuine class
+    return 1.0 - u / (n_g * n_i)            # flip: genuine scores are the LOWER ones
+
+
+def equal_error_rate(gen, imp):
+    lo, hi = min(gen + imp), max(gen + imp)
+    best = None
+    for k in range(2001):
+        t = lo + (hi - lo) * k / 2000
+        frr = sum(1 for v in gen if v > t) / len(gen)
+        far = sum(1 for v in imp if v <= t) / len(imp)
+        if best is None or abs(frr - far) < abs(best[1] - best[2]):
+            best = (t, frr, far)
+    return best
+
+
+def d_prime(gen, imp):
+    mg, mi = statistics.fmean(gen), statistics.fmean(imp)
+    vg = statistics.pvariance(gen) if len(gen) > 1 else 0.0
+    vi = statistics.pvariance(imp) if len(imp) > 1 else 0.0
+    spread = ((vg + vi) / 2) ** 0.5
+    return (mi - mg) / spread if spread else float("inf")
+
+
+def rank1(multi_template):
+    """Leave-one-out: is the nearest template the right person?
+
+    This is exactly what the 1:N cross-check tests, so it is the metric that
+    tracks protection against buddy punching.
+    """
+    correct = total = 0
+    for probe in names:
+        cand_ids, cand_vecs = [], []
+        for ident in idents:
+            shots = [n for n in names if identity[n] == ident and n != probe]
+            if not shots:
+                continue
+            for shot in (shots if multi_template else shots[:1]):
+                cand_ids.append(ident)
+                cand_vecs.append(embeddings[shot])
+        if identity[probe] not in cand_ids:
+            continue
+        dists = engine.distances(np.stack(cand_vecs).astype(np.float32), embeddings[probe])
+        total += 1
+        if cand_ids[int(dists.argmin())] == identity[probe]:
+            correct += 1
+    return correct, total
+
+
+auc = roc_auc(g, i)
+eer_t, eer_frr, eer_far = equal_error_rate(g, i)
+dp = d_prime(g, i)
+r1_single = rank1(False)
+r1_multi = rank1(True)
+thin = [r for r in rows if r[0] < 0.10]
+
+print(f"  engine                       {engine.ENGINE_ID} ({engine.EMBEDDING_DIM}-d)")
+print(f"  ROC AUC                      {auc:.4f}       (1.0 = perfect, 0.5 = chance)")
+print(f"  EER                          {(eer_frr+eer_far)/2*100:.2f}%      at distance {eer_t:.3f}")
+print(f"  d-prime                      {dp:.2f}")
+print(f"  rank-1, single template      {r1_single[0]}/{r1_single[1]} = {r1_single[0]/r1_single[1]*100:.1f}%")
+print(f"  rank-1, all templates        {r1_multi[0]}/{r1_multi[1]} = {r1_multi[0]/r1_multi[1]*100:.1f}%")
+print(f"  identities with margin <0.10 {len(thin)}/{len(rows)}  ({', '.join(r[1] for r in thin)})")
+print(f"  worst-case margin            {min(r[0] for r in rows):+.3f}")
+
+baseline = {
+    "engine_id": engine.ENGINE_ID,
+    "embedding_dim": engine.EMBEDDING_DIM,
+    "identities": len(idents),
+    "photos_usable": len(names),
+    "photos_refused": len(unusable),
+    "photos_duplicate": len(duplicates),
+    "genuine_pairs": len(g),
+    "impostor_pairs": len(i),
+    "roc_auc": round(auc, 4),
+    "eer_pct": round((eer_frr + eer_far) / 2 * 100, 3),
+    "eer_threshold": round(eer_t, 4),
+    "d_prime": round(dp, 3),
+    "rank1_single_pct": round(r1_single[0] / r1_single[1] * 100, 2),
+    "rank1_multi_pct": round(r1_multi[0] / r1_multi[1] * 100, 2),
+    "genuine_worst": round(g[-1], 4),
+    "impostor_closest": round(i[0], 4),
+    "separation_gap": round(i[0] - g[-1], 4),
+    "worst_margin": round(min(r[0] for r in rows), 4),
+    "thin_margin_identities": sorted(r[1] for r in thin),
+    "photos": names,
+}
+HERE = os.path.dirname(os.path.abspath(__file__))
+out = os.path.join(HERE, f"metrics_{engine.ENGINE_ID}.json")
+with open(out, "w") as fh:
+    json.dump(baseline, fh, indent=2, sort_keys=True)
+print("")
+print(f"  baseline written to {out}")
+print("  freeze it as baseline_<engine>.json to compare future runs against")
+
+
+# --- comparison against frozen baselines ------------------------------------
+# Each engine's accepted numbers live in tests/baseline_<engine_id>.json.
+# Comparing against the file rather than a remembered figure is the point:
+# distances are not comparable across engines, so only the scale-free metrics
+# below carry meaning in a cross-engine row.
+SCALE_FREE = [
+    ("roc_auc", "ROC AUC", True),
+    ("eer_pct", "EER %", False),
+    ("d_prime", "d-prime", True),
+    ("rank1_single_pct", "rank-1 single %", True),
+    ("rank1_multi_pct", "rank-1 multi %", True),
+]
+SCALE_BOUND = [
+    ("separation_gap", "separation gap", True),
+    ("worst_margin", "worst margin", True),
+    ("genuine_worst", "worst genuine dist", False),
+    ("impostor_closest", "closest impostor dist", True),
+]
+
+frozen = {}
+for path in sorted(glob.glob(os.path.join(HERE, "baseline_*.json"))):
+    with open(path) as fh:
+        data = json.load(fh)
+    frozen[data["engine_id"]] = data
+
+print("")
+if not frozen:
+    print("=== no frozen baselines yet ===")
+    print(f"  freeze this run:  cp {out} {os.path.join(HERE, 'baseline_' + engine.ENGINE_ID + '.json')}")
+else:
+    own = frozen.get(engine.ENGINE_ID)
+    if own:
+        print(f"=== regression check against baseline_{engine.ENGINE_ID}.json ===")
+        drift = []
+        for key, label, higher_better in SCALE_FREE + SCALE_BOUND:
+            was, now = own.get(key), baseline.get(key)
+            if was is None or now is None:
+                continue
+            delta = now - was
+            if abs(delta) > 1e-6:
+                drift.append((label, was, now, delta))
+        if drift:
+            print("  metrics moved since the baseline was frozen:")
+            for label, was, now, delta in drift:
+                print(f"    {label:<24}{was:>10.4f} -> {now:>10.4f}   {delta:+.4f}")
+            print("  a refactor that changes nothing should show no drift here")
+        else:
+            print("  identical to the frozen baseline - no behavioural drift")
+
+    others = {k: v for k, v in frozen.items() if k != engine.ENGINE_ID}
+    for other_id, other in others.items():
+        print("")
+        print(f"=== {engine.ENGINE_ID} vs {other_id} ===")
+        print(f"  {'metric':<24}{other_id[:14]:>15}{engine.ENGINE_ID[:14]:>15}   verdict")
+        for key, label, higher_better in SCALE_FREE:
+            a, b = other.get(key), baseline.get(key)
+            if a is None or b is None:
+                continue
+            delta = b - a
+            better = (delta > 0) if higher_better else (delta < 0)
+            verdict = "better" if (abs(delta) > 1e-9 and better) else "worse" if abs(delta) > 1e-9 else "same"
+            print(f"  {label:<24}{a:>15.4f}{b:>15.4f}   {verdict}")
+        print(f"  {'-- distance-scale metrics below are NOT comparable across engines --':<40}")
+        for key, label, higher_better in SCALE_BOUND:
+            a, b = other.get(key), baseline.get(key)
+            if a is None or b is None:
+                continue
+            print(f"  {label:<24}{a:>15.4f}{b:>15.4f}")
+        a_thin = set(other.get("thin_margin_identities", []))
+        b_thin = set(baseline.get("thin_margin_identities", []))
+        print(f"  {'thin-margin identities':<24}{','.join(sorted(a_thin)) or '-':>15}"
+              f"{','.join(sorted(b_thin)) or '-':>15}")
+        fixed, broke = a_thin - b_thin, b_thin - a_thin
+        if fixed:
+            print(f"    no longer thin: {', '.join(sorted(fixed))}")
+        if broke:
+            print(f"    newly thin:     {', '.join(sorted(broke))}")

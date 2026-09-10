@@ -163,11 +163,25 @@ for ident in identities:
     shots = sorted(s for s in names if identity[s] == ident)
     if len(shots) < 2:
         continue
-    status, body, t = call("POST", "/enroll",
-                           {"tenant_id": "SMOKE", "employee_id": ident, "images": [photos[shots[0]]]})
-    check(f"enroll {ident}", status == 200 and body["data"]["templates_stored"] == 1,
-          json.dumps(body)[:160])
-    enrolled.append((ident, shots))
+    # The quality gates may refuse the first photo, which is correct behaviour;
+    # a real enrollment flow would ask for another.  Walk forward until one
+    # sticks, keeping a later photo aside to verify against.
+    usable = None
+    for position, shot in enumerate(shots[:-1]):
+        status, body, t = call("POST", "/enroll",
+                               {"tenant_id": "SMOKE", "employee_id": ident,
+                                "images": [photos[shot]]})
+        if status == 200 and body["data"]["templates_stored"] == 1:
+            usable = position
+            break
+        if body.get("reason") in QUALITY_REFUSALS:
+            refused.append((shot, body["reason"]))
+            continue
+        break
+    check(f"enroll {ident}", usable is not None, json.dumps(body)[:160])
+    if usable is None:
+        continue
+    enrolled.append((ident, [shots[usable]] + shots[usable + 1:]))
 
 for ident, shots in enrolled:
     status, body, t = call("POST", "/verify",

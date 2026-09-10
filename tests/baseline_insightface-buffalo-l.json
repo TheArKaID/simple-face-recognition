@@ -1,0 +1,21 @@
+{
+  "d_prime": 8.144,
+  "eer_pct": 0.0,
+  "eer_threshold": 0.5479,
+  "embedding_dim": 512,
+  "engine_id": "insightface-buffalo-l",
+  "genuine_pairs": 131,
+  "genuine_worst": 0.5476,
+  "identities": 15,
+  "impostor_closest": 0.6767,
+  "impostor_pairs": 2080,
+  "photos_duplicate": 1,
+  "photos_refused": 1,
+  "photos_usable": 67,
+  "rank1_multi_pct": 100.0,
+  "rank1_single_pct": 100.0,
+  "roc_auc": 1.0,
+  "separation_gap": 0.1291,
+  "thin_margin_identities": [],
+  "worst_margin": 0.2053
+}

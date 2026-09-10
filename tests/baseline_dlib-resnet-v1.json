@@ -1,0 +1,27 @@
+{
+  "d_prime": 3.072,
+  "eer_pct": 3.425,
+  "eer_threshold": 0.5272,
+  "embedding_dim": 128,
+  "engine_id": "dlib-resnet-v1",
+  "genuine_pairs": 117,
+  "genuine_worst": 0.5866,
+  "identities": 15,
+  "impostor_closest": 0.4526,
+  "impostor_pairs": 1836,
+  "photos_duplicate": 1,
+  "photos_refused": 5,
+  "photos_usable": 63,
+  "rank1_multi_pct": 100.0,
+  "rank1_single_pct": 98.41,
+  "roc_auc": 0.9951,
+  "separation_gap": -0.134,
+  "thin_margin_identities": [
+    "anggit",
+    "e",
+    "f",
+    "h",
+    "j"
+  ],
+  "worst_margin": -0.0024
+}
