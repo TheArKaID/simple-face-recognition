@@ -53,6 +53,12 @@ ALLOW_MULTIPLE_FACES = _bool("FACE_ALLOW_MULTIPLE_FACES", False)
 LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 
 # --- Engine ------------------------------------------------------------------
+# Which backend under engines/ to load.  "dlib" is the engine that has been in
+# production; "insightface" is the candidate being evaluated against it.
+# Templates carry their engine id, so switching does not mix vector spaces -
+# but thresholds below are per-engine and must be recalibrated after a switch.
+FACE_ENGINE = os.getenv("FACE_ENGINE", "dlib").strip().lower()
+
 LANDMARK_MODEL = os.getenv("FACE_LANDMARK_MODEL", "large")  # "large" = 68 points
 NUM_JITTERS = _int("FACE_NUM_JITTERS", 1)
 UPSAMPLE = _int("FACE_DETECT_UPSAMPLE", 1)
