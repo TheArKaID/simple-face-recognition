@@ -35,12 +35,12 @@ _ENGINE_THRESHOLDS = {
     # Euclidean over 128 dims.  Measured genuine 0.000-0.587 against impostor
     # 0.453-1.138: the two OVERLAP, so no threshold separates them.  These are
     # chosen for the genuine side and the 1:N margin carries the security.
-    "dlib": {"accept": 0.50, "review": 0.56, "margin": 0.05},
+    "dlib": {"accept": 0.50, "review": 0.56, "margin": 0.05, "blur": 40.0},
     # Cosine distance over 512 dims, range 0-2.  Measured genuine 0.016-0.502
     # against impostor 0.677-1.202: fully separated, gap +0.174.  Accept sits
     # above the worst genuine with room, review below the closest impostor with
     # room, so the measured gap stays available as headroom for harder faces.
-    "insightface": {"accept": 0.55, "review": 0.64, "margin": 0.10},
+    "insightface": {"accept": 0.55, "review": 0.64, "margin": 0.10, "blur": 10.0},
 }
 _T = _ENGINE_THRESHOLDS.get(FACE_ENGINE, _ENGINE_THRESHOLDS["dlib"])
 
@@ -71,7 +71,14 @@ MIN_IMPOSTOR_MARGIN = _float("FACE_MIN_IMPOSTOR_MARGIN", _T["margin"])
 # --- Image quality gates -----------------------------------------------------
 MAX_IMAGE_DIMENSION = _int("FACE_MAX_IMAGE_DIMENSION", 1600)
 MIN_FACE_PIXELS = _int("FACE_MIN_FACE_PIXELS", 80)
-MIN_BLUR_VARIANCE = _float("FACE_MIN_BLUR_VARIANCE", 40.0)
+# Engine-specific, and for a substantive reason: the detectors return different
+# crops, so the same photo measures differently, and ArcFace tolerates blur that
+# dlib cannot.  Four photos this gate refused at 40 (blur 22.9-36.9) embed
+# cleanly under InsightFace - 0.13-0.22 from their own identity against
+# 0.75-0.81 from the nearest other person.  So the low floor here is a sanity
+# check against catastrophic blur, not a tuned value: no blur level present in
+# tests/images actually broke an InsightFace embedding.
+MIN_BLUR_VARIANCE = _float("FACE_MIN_BLUR_VARIANCE", _T["blur"])
 MIN_BRIGHTNESS = _float("FACE_MIN_BRIGHTNESS", 40.0)
 MAX_BRIGHTNESS = _float("FACE_MAX_BRIGHTNESS", 225.0)
 ALLOW_MULTIPLE_FACES = _bool("FACE_ALLOW_MULTIPLE_FACES", False)
