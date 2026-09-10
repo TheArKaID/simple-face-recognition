@@ -50,6 +50,8 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+tests/images
+metrics_*.json
 
 # Translations
 *.mo
@@ -177,3 +179,6 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# ArcFace weights are fetched during the Docker build, not committed (184MB)
+models/arcface/
