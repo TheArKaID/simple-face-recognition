@@ -1,14 +1,17 @@
-# dlib is the only thing that still needs compiling, so it is built in a
-# throwaway stage and the toolchain left behind.  Nothing here needs
-# TensorFlow, CUDA, or the insightface package: engines/arcface_onnx.py drives
-# the ArcFace weights through onnxruntime directly, which is what keeps this
-# image around 700MB instead of 2.15GB.
+# Nothing here compiles any more.  The image once carried TensorFlow, CUDA and
+# DeepFace (~7GB), then dlib and the insightface package (2.2GB); what remains is
+# onnxruntime driving two ONNX files, which is most of the way back down.
+#
+# The builder stage exists only to keep the wheel cache and the weight download
+# out of the final layers.
 FROM python:3.11-slim AS builder
 
+# build-essential is insurance: every dependency currently ships a manylinux
+# wheel for cp311, so nothing is built from source, but a future dependency
+# without one would fail the build rather than fall back.  It costs build time
+# only - multi-stage means it never reaches the runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        cmake \
-        libopenblas-dev \
         curl \
         unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -18,8 +21,8 @@ COPY requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
 # Two files out of the buffalo_l pack.  Fetching them here rather than at first
-# use matters for Swarm: four replicas on a cold start would otherwise each
-# pull ~300MB at once.  The other three models in the pack - 3D landmarks, 2D
+# use matters for Swarm: four replicas on a cold start would otherwise each pull
+# ~300MB at once.  The other three models in the pack - 3D landmarks, 2D
 # landmarks, age/gender - are never loaded, so they are not extracted.
 RUN mkdir -p /models/arcface \
     && curl -fsSL -o /tmp/buffalo_l.zip \
@@ -31,9 +34,8 @@ RUN mkdir -p /models/arcface \
 
 FROM python:3.11-slim
 
-# Runtime halves of what dlib was linked against.
+# onnxruntime uses OpenMP.  dlib's libopenblas is gone along with dlib itself.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libopenblas0 \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,9 +49,9 @@ COPY requirements.txt .
 # with both gone: ~100MB of image for no loss of function.
 #
 # These comments sit ABOVE the RUN on purpose.  A '#' line inside a backslash
-# continuation ends the instruction and silently discards the rest - an
-# earlier version put them mid-chain and the uninstall never ran, while the
-# build still reported success.
+# continuation ends the instruction and silently discards the rest - an earlier
+# version put them mid-chain and the uninstall never ran, while the build still
+# reported success.
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels \
     && pip uninstall -y sympy mpmath \

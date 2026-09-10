@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Sequence, Tuple
@@ -87,14 +88,37 @@ class TemplateStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        # WAL lets the replicas read while one of them writes; busy_timeout
-        # makes the rare concurrent write wait instead of failing outright.
-        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        self._enable_wal()
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._index_cache: Dict[str, TenantIndex] = {}
+
+    def _enable_wal(self) -> None:
+        """Put the database in WAL mode, tolerating a startup race.
+
+        WAL is what lets the replicas read while one of them writes.  Switching
+        into it needs a brief exclusive lock, and SQLite does not reliably route
+        that through the busy handler, so busy_timeout alone is not enough: four
+        Swarm replicas opening a cold database in the same instant will collide.
+        The race used to hide behind dlib's slow import, which staggered the
+        startups by a second or two; removing dlib made it reproducible.
+
+        Whoever wins sets the mode and the rest simply observe it.  If every
+        attempt loses, the store carries on in rollback-journal mode - less
+        read/write concurrency, but a replica that starts, which beats one that
+        crash-loops on an empty volume.
+        """
+        for attempt in range(10):
+            current = self._conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if str(current).lower() == "wal":
+                return
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError:
+                time.sleep(0.05 * (attempt + 1))
 
     # --- writes --------------------------------------------------------------
 

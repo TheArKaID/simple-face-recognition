@@ -1,12 +1,16 @@
-# Active engine is chosen at runtime with FACE_ENGINE.
+# The active engine is chosen at runtime with FACE_ENGINE; see engine.py for the
+# backend contract and config._ENGINE_THRESHOLDS for per-engine thresholds.
 #
-# "arcface-onnx" is the ArcFace path: engines/arcface_onnx.py drives the
-# buffalo_l ONNX files through onnxruntime directly.  The insightface package
-# is deliberately absent - it pulls scipy, scikit-image, scikit-learn,
+# "arcface-onnx" is the only real engine now: engines/arcface_onnx.py drives the
+# buffalo_l ONNX files through onnxruntime directly. The insightface package is
+# deliberately absent - it pulls scipy, scikit-image, scikit-learn,
 # albumentations and matplotlib to do work that file does in numpy, and those
-# accounted for roughly 1.2GB of image.  tools/compare_backends.py proves the
-# two produce the same embeddings, so stored templates are unaffected.
-face_recognition==1.3.0
+# accounted for roughly 1.2GB of image. tools/compare_backends.py proves the two
+# produce identical embeddings, which is why they share an ENGINE_ID.
+#
+# dlib and face_recognition are gone too: they lost the accuracy comparison
+# outright and were the last thing here needing a C++ toolchain, which is most
+# of the build time.
 numpy<2
 pillow>=9.0.0
 opencv-python-headless

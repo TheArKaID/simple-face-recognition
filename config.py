@@ -20,36 +20,57 @@ def _bool(name, default):
 
 
 # --- Engine ------------------------------------------------------------------
-# Which backend under engines/ to load.  "dlib" is the engine that has been in
-# production; "insightface" is the ArcFace candidate.  Templates carry their
-# engine id, so switching cannot mix vector spaces - but it does invalidate
-# every stored template, and every threshold below.
-FACE_ENGINE = os.getenv("FACE_ENGINE", "dlib").strip().lower()
+# Which backend under engines/ to load; engine.py documents the contract a new
+# one has to honour.  "arcface-onnx" is the production engine: SCRFD detection
+# and ArcFace w600k_r50 driven through onnxruntime directly.
+#
+# The dlib backend the service originally shipped with has been removed.  It
+# lost on every measure that mattered - d-prime 3.07 against 8.20, and its
+# genuine and impostor distance distributions overlapped, so no single threshold
+# separated them - and it was the only thing left in the image needing a C++
+# toolchain.
+FACE_ENGINE = os.getenv("FACE_ENGINE", "arcface-onnx").strip().lower()
 
-# Each backend measures distance on its own scale, so one set of thresholds
-# cannot serve both.  These come from tests/calibrate.py over tests/images
-# (15 identities, 63 usable photos) and are frozen in tests/baseline_*.json.
-# Env vars still win, and any real deployment should retune from its own
-# verify_log - a larger roster brings impostors closer than any fixture set can.
+# Distance scales are per-engine and never interchangeable, so thresholds live
+# beside the engine that produced them.  Adding an engine means adding an entry
+# here and a module under engines/ - nothing else.
+#
+# These come from tests/calibrate.py over tests/images (15 identities, 68 usable
+# photos) and are frozen in tests/baseline_*.json.  Env vars still win, and a
+# real deployment should retune from its own verify_log: a larger roster brings
+# impostors closer than any fixture set can.
 _ENGINE_THRESHOLDS = {
-    # Euclidean over 128 dims.  Measured genuine 0.000-0.587 against impostor
-    # 0.453-1.138: the two OVERLAP, so no threshold separates them.  These are
-    # chosen for the genuine side and the 1:N margin carries the security.
-    "dlib": {"accept": 0.50, "review": 0.56, "margin": 0.05, "blur": 40.0},
-    # Cosine distance over 512 dims, range 0-2.  Measured genuine 0.016-0.502
-    # against impostor 0.677-1.202: fully separated, gap +0.174.  Accept sits
-    # above the worst genuine with room, review below the closest impostor with
-    # room, so the measured gap stays available as headroom for harder faces.
-    "insightface": {"accept": 0.55, "review": 0.64, "margin": 0.10, "blur": 10.0},
-    # Same weights, same vector space, so the same numbers apply.
-    "arcface-onnx": {"accept": 0.55, "review": 0.64, "margin": 0.10, "blur": 10.0},
+    # Cosine distance over 512 dims, range 0-2.  Measured genuine 0.016-0.548
+    # against impostor 0.677-1.202: fully separated.  Accept sits above the
+    # worst genuine with room, review below the closest impostor with room, so
+    # the measured gap stays available as headroom for harder faces.
+    "arcface-onnx": {
+        "accept": 0.55,
+        "review": 0.64,
+        "margin": 0.10,
+        "blur": 10.0,
+        # /compare-fr has no review band and no roster to cross-check against,
+        # so it needs one line.  0.60 sits between the worst genuine pair and
+        # the closest impostor pair - looser than `accept` because that endpoint
+        # has no 1:N check behind it to catch what slips past.
+        "legacy": 0.60,
+    },
+    # A recogniser-free double for the offline suites, and the smallest
+    # complete example of the backend contract.
+    "stub": {
+        "accept": 0.55,
+        "review": 0.64,
+        "margin": 0.10,
+        "blur": 10.0,
+        "legacy": 0.60,
+    },
 }
-_T = _ENGINE_THRESHOLDS.get(FACE_ENGINE, _ENGINE_THRESHOLDS["dlib"])
-
-# dlib backend only.
-LANDMARK_MODEL = os.getenv("FACE_LANDMARK_MODEL", "large")  # "large" = 68 points
-NUM_JITTERS = _int("FACE_NUM_JITTERS", 1)
-UPSAMPLE = _int("FACE_DETECT_UPSAMPLE", 1)
+if FACE_ENGINE not in _ENGINE_THRESHOLDS:
+    raise RuntimeError(
+        f"FACE_ENGINE={FACE_ENGINE!r} has no thresholds. Add an entry to "
+        f"config._ENGINE_THRESHOLDS; known engines: {sorted(_ENGINE_THRESHOLDS)}"
+    )
+_T = _ENGINE_THRESHOLDS[FACE_ENGINE]
 
 # --- Decision thresholds -----------------------------------------------------
 # distance <= ACCEPT_MAX_DISTANCE            -> accept
@@ -58,31 +79,22 @@ UPSAMPLE = _int("FACE_DETECT_UPSAMPLE", 1)
 ACCEPT_MAX_DISTANCE = _float("FACE_ACCEPT_MAX_DISTANCE", _T["accept"])
 REVIEW_MAX_DISTANCE = _float("FACE_REVIEW_MAX_DISTANCE", _T["review"])
 
-# Tolerance for the legacy /compare-fr endpoint (was face_recognition's 0.6).
-# Only meaningful on the dlib scale, which is the engine that endpoint shipped
-# with; set it explicitly if you ever point /compare-fr at another backend.
-LEGACY_TOLERANCE = _float("FACE_LEGACY_TOLERANCE", 0.50)
+# Single threshold for the legacy /compare-fr endpoint, which production still
+# calls.  It was face_recognition's 0.6 on dlib's Euclidean scale originally;
+# that number means nothing here, hence the per-engine value above.
+LEGACY_TOLERANCE = _float("FACE_LEGACY_TOLERANCE", _T["legacy"])
 
 # --- 1:N impostor cross-check ------------------------------------------------
 CROSS_CHECK_ENABLED = _bool("FACE_CROSS_CHECK", True)
 # The claimed employee must beat the best other employee by at least this much.
 # Falling short only downgrades to review, never rejects, so raising it trades
 # review volume for security without ever refusing a genuine employee outright.
+#
+# Worth keeping on even though ArcFace separates cleanly without it: the gap
+# narrows as headcount grows, and the check costs one matrix multiply.
 MIN_IMPOSTOR_MARGIN = _float("FACE_MIN_IMPOSTOR_MARGIN", _T["margin"])
 
-# --- Image quality gates -----------------------------------------------------
-MAX_IMAGE_DIMENSION = _int("FACE_MAX_IMAGE_DIMENSION", 1600)
-MIN_FACE_PIXELS = _int("FACE_MIN_FACE_PIXELS", 80)
-# Engine-specific, and for a substantive reason: the detectors return different
-# crops, so the same photo measures differently, and ArcFace tolerates blur that
-# dlib cannot.  Four photos this gate refused at 40 (blur 22.9-36.9) embed
-# cleanly under InsightFace - 0.13-0.22 from their own identity against
-# 0.75-0.81 from the nearest other person.  So the low floor here is a sanity
-# check against catastrophic blur, not a tuned value: no blur level present in
-# tests/images actually broke an InsightFace embedding.
-MIN_BLUR_VARIANCE = _float("FACE_MIN_BLUR_VARIANCE", _T["blur"])
-MIN_BRIGHTNESS = _float("FACE_MIN_BRIGHTNESS", 40.0)
-MAX_BRIGHTNESS = _float("FACE_MAX_BRIGHTNESS", 225.0)
+# --- Subject selection -------------------------------------------------------
 # A colleague wandering into frame should not block attendance, but the face
 # that gets verified must still be the one presenting.  The subject is the
 # LARGEST face: in a selfie that is whoever holds the phone, and a bystander
@@ -90,14 +102,28 @@ MAX_BRIGHTNESS = _float("FACE_MAX_BRIGHTNESS", 225.0)
 # subject clearly dominates - two similarly sized faces mean the frame does not
 # say who is presenting, so it is refused rather than guessed at.
 #
-# Security note: allowing extra faces reopens one attack that a hard refusal
-# closed - holding a phone showing the claimed employee's photo close enough to
-# the camera to become the largest face.  Only liveness detection closes that,
-# so raising MAX_EXTRA_FACES above 0 should go with anti-spoofing.
+# Allowing extra faces reopens one attack a hard refusal closed: holding a phone
+# showing the claimed employee's photo close enough to become the largest face.
+# Liveness is what closes that, so MAX_EXTRA_FACES above 0 belongs with
+# LIVENESS_MODE=model.
 MAX_EXTRA_FACES = _int("FACE_MAX_EXTRA_FACES", 2)
 PRIMARY_FACE_DOMINANCE = _float("FACE_PRIMARY_DOMINANCE", 1.8)
-# Off by default on /compare-fr so the endpoint already in production only
-# changes in the two ways intended: stricter tolerance, and multi-face refusal.
+
+# --- Image quality gates -----------------------------------------------------
+MAX_IMAGE_DIMENSION = _int("FACE_MAX_IMAGE_DIMENSION", 1600)
+MIN_FACE_PIXELS = _int("FACE_MIN_FACE_PIXELS", 80)
+# Per-engine, and for a substantive reason: detectors return different crops so
+# the same photo measures differently, and ArcFace tolerates blur that dlib
+# could not.  Four photos a threshold of 40 refused embed cleanly here - 0.13 to
+# 0.22 from their own identity against 0.75 to 0.81 from the nearest other
+# person - so this low floor is a sanity check against catastrophic blur, not a
+# tuned value.  No blur level present in tests/images broke an embedding.
+MIN_BLUR_VARIANCE = _float("FACE_MIN_BLUR_VARIANCE", _T["blur"])
+MIN_BRIGHTNESS = _float("FACE_MIN_BRIGHTNESS", 40.0)
+MAX_BRIGHTNESS = _float("FACE_MAX_BRIGHTNESS", 225.0)
+# Off by default on /compare-fr: that endpoint predates the gates, and
+# tightening it silently would change production behaviour without anyone
+# asking for it.
 LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 
 # --- Liveness / presentation-attack detection --------------------------------
@@ -105,7 +131,7 @@ LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 # "model" - run the MiniFASNet weights in LIVENESS_MODEL_DIR
 #
 # Measured on tests/images against tests/images/spoof (69 live faces, 9 screen
-# photos): live scores ran 0.551-1.000, spoofs 0.000-0.000056, ROC AUC 1.0000.
+# photos): live scores ran 0.551-1.000, spoofs 0.000-0.0001, ROC AUC 1.0000.
 # On the strength of that it defaults to on - see tools/measure_liveness.py to
 # re-measure after any change to the crop, the detector or the weights.
 LIVENESS_MODE = os.getenv("FACE_LIVENESS_MODE", "model").strip().lower()
@@ -113,7 +139,7 @@ LIVENESS_MODEL_DIR = os.getenv(
     "FACE_LIVENESS_MODEL_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "liveness"),
 )
-# Chosen from the measured gap, not from the EER: spoofs scored at most 0.00006
+# Chosen from the measured gap, not from the EER: spoofs scored at most 0.0001
 # while the hardest live face scored 0.551, so this sits well clear of both,
 # with the headroom deliberately on the genuine side.  A refused live employee
 # retakes a photo; an accepted spoof records attendance that never happened, so
