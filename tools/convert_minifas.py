@@ -69,8 +69,22 @@ for name in sorted(os.listdir(weights_dir)):
         input_names=["input"],
         output_names=["logits"],
         dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}},
-        opset_version=12,
+        # 18, not something lower: the exporter implements 18 and then fails
+        # noisily trying to down-convert, leaving the model at 18 anyway.
+        opset_version=18,
     )
+
+    # Fold any external weight file back in.  torch's exporter splits large
+    # tensors into a sibling .onnx.data, which onnxruntime resolves by relative
+    # path - so copying the .onnx alone silently yields an unusable model.  At
+    # ~2MB there is no reason not to keep each model in one self-contained file.
+    import onnx
+
+    model_proto = onnx.load(out_path)                 # resolves external data
+    onnx.save(model_proto, out_path, save_as_external_data=False)
+    sidecar = out_path + ".data"
+    if os.path.exists(sidecar):
+        os.remove(sidecar)
 
     # Prove the export matches the torch model before trusting the file.
     import numpy as np
@@ -86,4 +100,6 @@ for name in sorted(os.listdir(weights_dir)):
     print(f"  responds to input: max |noise - zeros| = {spread:.4f}  "
           f"{'OK' if spread > 0.5 else 'DEAD - weights did not take effect'}")
     print(f"  onnx vs torch max abs diff {delta:.3e}  {'OK' if delta < 1e-4 else 'MISMATCH'}")
+    leftovers = [f for f in os.listdir(OUT) if f.endswith(".onnx.data")]
+    print(f"  self-contained: {'yes' if not leftovers else 'NO - ' + str(leftovers)}")
     print(f"  wrote {out_path} ({os.path.getsize(out_path)/1024:.0f} KB)")
