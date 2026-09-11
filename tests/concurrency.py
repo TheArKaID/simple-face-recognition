@@ -198,11 +198,22 @@ for r in results:
 for base, ms in sorted(per_base.items()):
     print(f"    {base}: n={len(ms)} p50 {statistics.median(ms):.0f} ms")
 
-# Queueing is expected and fine; a 10x blowup would mean thread oversubscription
-# rather than honest queueing.
+# Queueing is expected and fine; a blowup past it means thread oversubscription
+# or lock convoy rather than honest queueing.
+#
+# The budget is the queue depth each instance actually sees - concurrent callers
+# spread over the instances - times the unloaded cost of one request, with 1.5x
+# of slack.  An earlier version used `len(BASES) * 3`, which had the scaling
+# backwards: it granted MORE latency budget the more instances were sharing the
+# load, and ignored the concurrency level entirely.  Against a single instance
+# at 8 concurrent callers it demanded 3x where honest serialisation alone costs
+# 8x, so it failed a system that was behaving correctly.
+queue_depth = WORKERS / len(BASES)
+budget = solo_median * queue_depth * 1.5
 check("latency degrades proportionally, not pathologically",
-      p50 < solo_median * len(BASES) * 3,
-      f"p50 {p50:.0f} ms vs unloaded {solo_median:.0f} ms")
+      p50 < budget,
+      f"p50 {p50:.0f} ms vs budget {budget:.0f} ms "
+      f"({solo_median:.0f} ms unloaded x {queue_depth:.1f} queued x 1.5)")
 
 print("\n== cleanup ==")
 for ident, _ in enrolled:

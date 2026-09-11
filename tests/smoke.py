@@ -31,10 +31,20 @@ import urllib.error
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "images")
-if not os.path.isdir(IMAGE_DIR):
-    IMAGE_DIR = r"D:\Project\Python\facerecog\tests\images"
+# The photos sit next to this file, in tests/images.  An earlier version walked
+# up one directory too many, looked for /app/images, and fell back to a
+# hard-coded Windows path that can never exist inside the container - so the
+# glob matched nothing and the run died on an empty sequence rather than
+# saying the directory was missing.
+IMAGE_DIR = os.getenv(
+    "FACE_SMOKE_IMAGES",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "images"),
+)
+if not os.path.isdir(IMAGE_DIR):
+    raise SystemExit(
+        f"no photo directory at {IMAGE_DIR} -"
+        " set FACE_SMOKE_IMAGES to point at one"
+    )
 
 PASS, FAIL = [], []
 
