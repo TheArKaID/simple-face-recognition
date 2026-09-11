@@ -2,6 +2,7 @@ services:
   app:
     image: adminmeetaza/prime-face-recognizer:latest
     build: .
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
