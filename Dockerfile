@@ -20,15 +20,26 @@ WORKDIR /build
 COPY requirements.txt .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
-# Two files out of the buffalo_l pack.  Fetching them here rather than at first
-# use matters for Swarm: four replicas on a cold start would otherwise each pull
-# ~300MB at once.  The other three models in the pack - 3D landmarks, 2D
-# landmarks, age/gender - are never loaded, so they are not extracted.
+# Two files out of the buffalo_m pack: det_2.5g for detection, w600k_r50 for
+# recognition - the same recogniser buffalo_l ships, so this swap changes only
+# the detector.  Fetching here rather than at first use matters for Swarm: four
+# replicas on a cold start would otherwise each pull ~260MB at once.  The pack's
+# other three models - 3D landmarks, 2D landmarks, age/gender - are never
+# loaded, so they are not extracted.
+#
+# Exact member paths, not globs.  buffalo_m.zip stores its files under a
+# buffalo_m/ prefix (buffalo_l.zip does not), and a glob that fails to match
+# leaves unzip printing "filename not matched" while still exiting 0 - so a glob
+# here could produce an image with no detector and a build that looked fine.
+# The two `test -s` calls make that failure loud instead.
 RUN mkdir -p /models/arcface \
-    && curl -fsSL -o /tmp/buffalo_l.zip \
-        https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip \
-    && unzip -j /tmp/buffalo_l.zip '*det_10g.onnx' '*w600k_r50.onnx' -d /models/arcface \
-    && rm /tmp/buffalo_l.zip \
+    && curl -fsSL -o /tmp/buffalo_m.zip \
+        https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_m.zip \
+    && unzip -j /tmp/buffalo_m.zip \
+        'buffalo_m/det_2.5g.onnx' 'buffalo_m/w600k_r50.onnx' -d /models/arcface \
+    && rm /tmp/buffalo_m.zip \
+    && test -s /models/arcface/det_2.5g.onnx \
+    && test -s /models/arcface/w600k_r50.onnx \
     && ls -l /models/arcface
 
 

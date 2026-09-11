@@ -14,9 +14,12 @@ loads account for most of a 2.15GB image.
 Every constant below comes from the upstream implementation and none of them are
 adjustable knobs:
 
-  detection    SCRFD det_10g, 640x640 letterboxed, RGB, (x-127.5)/128
-               three strides (8/16/32), two anchors per location, distance-coded
-               boxes and five keypoints, then NMS at 0.4
+  detection    SCRFD, 640x640 letterboxed, RGB, (x-127.5)/128, three strides
+               (8/16/32), two anchors per location, distance-coded boxes and
+               five keypoints, then NMS at 0.4.  det_10g, det_2.5g and det_500m
+               all share that nine-output topology and are interchangeable here
+               (verified by reading their ONNX signatures); det_2.5g is the
+               default.  They are NOT interchangeable in effect - see ENGINE_ID.
   alignment    similarity transform from the five keypoints onto ArcFace's
                canonical 112x112 positions
   recognition  w600k_r50, 112x112, RGB, (x-127.5)/127.5, L2-normalised output
@@ -40,23 +43,30 @@ from engines.common import (
     select_subject,
 )
 
-# Same vector space as the package backend, so templates carry over.
-ENGINE_ID = "insightface-buffalo-l"
+# det_2.5g + w600k_r50 is exactly the pairing in the buffalo_m pack, hence the
+# id.  It differs from "insightface-buffalo-l" (det_10g plus the same
+# recogniser) only in the detector - but a different detector means different
+# five-point landmarks, a different affine alignment, and therefore a different
+# embedding.  Measured drift against the det_10g pipeline was under 0.052 on 68
+# of 69 photos and 0.153 on one hard image, against an impostor margin of 0.10:
+# small, but not nothing.  So the id changes, and templates from the old
+# pipeline are correctly treated as stale rather than quietly compared against.
+ENGINE_ID = "insightface-buffalo-m"
 EMBEDDING_DIM = 512
 
-# Two files out of the buffalo_l pack, fetched during the build rather than
-# committed - 184MB of weights does not belong in git.  Point this at
-# ~/.insightface/models/buffalo_l instead if the package is installed locally.
+# Two files out of the buffalo_m pack, fetched during the build rather than
+# committed - 170MB of weights does not belong in git.
 MODEL_DIR = os.getenv(
     "FACE_ARCFACE_MODEL_DIR",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                  "models", "arcface"),
 )
-DET_MODEL = os.getenv("FACE_ARCFACE_DET", "det_10g.onnx")
-REC_MODEL = os.getenv("FACE_ARCFACE_REC", "w600k_r50.onnx")
-
-DET_SIZE = int(os.getenv("FACE_INSIGHTFACE_DET_SIZE", 640))
-DET_THRESH = float(os.getenv("FACE_INSIGHTFACE_MIN_DET_SCORE", 0.5))
+# Tunables live in config.py so every knob is in one place; see the ArcFace
+# block there for why the detector and its threshold are what they are.
+DET_MODEL = config.ARCFACE_DET_MODEL
+REC_MODEL = config.ARCFACE_REC_MODEL
+DET_SIZE = config.ARCFACE_DET_SIZE
+DET_THRESH = config.ARCFACE_MIN_DET_SCORE
 NMS_THRESH = 0.4
 
 # SCRFD det_10g topology: nine outputs, three strides, two anchors per cell.

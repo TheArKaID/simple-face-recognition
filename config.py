@@ -40,20 +40,25 @@ FACE_ENGINE = os.getenv("FACE_ENGINE", "arcface-onnx").strip().lower()
 # real deployment should retune from its own verify_log: a larger roster brings
 # impostors closer than any fixture set can.
 _ENGINE_THRESHOLDS = {
-    # Cosine distance over 512 dims, range 0-2.  Measured genuine 0.016-0.548
-    # against impostor 0.677-1.202: fully separated.  Accept sits above the
-    # worst genuine with room, review below the closest impostor with room, so
-    # the measured gap stays available as headroom for harder faces.
+    # Cosine distance over 512 dims, range 0-2.  Measured on the det_2.5g
+    # pipeline: genuine 0.016-0.540, impostor 0.646-1.20, fully separated with a
+    # gap of 0.105.  The thresholds sit INSIDE that gap with headroom on both
+    # sides rather than hugging either edge.
+    #
+    # They moved when the detector changed.  Under det_10g the closest impostor
+    # was 0.677 and a review ceiling of 0.64 left 0.037 of room; under det_2.5g
+    # it is 0.646 and that same 0.64 left only 0.006.  Still correct on 15
+    # identities, but the closest impostor keeps falling as the roster grows, and
+    # once it drops under the ceiling an impostor lands in review - accepted with
+    # a flag - instead of rejected.  Hence 0.61.
     "arcface-onnx": {
-        "accept": 0.55,
-        "review": 0.64,
+        "accept": 0.56,   # 0.020 above the worst genuine pair
+        "review": 0.61,   # 0.036 below the closest impostor pair
         "margin": 0.10,
         "blur": 10.0,
         # /compare-fr has no review band and no roster to cross-check against,
-        # so it needs one line.  0.60 sits between the worst genuine pair and
-        # the closest impostor pair - looser than `accept` because that endpoint
-        # has no 1:N check behind it to catch what slips past.
-        "legacy": 0.60,
+        # so it needs one line: the midpoint of the measured gap.
+        "legacy": 0.59,
     },
     # A recogniser-free double for the offline suites, and the smallest
     # complete example of the backend contract.
@@ -71,6 +76,27 @@ if FACE_ENGINE not in _ENGINE_THRESHOLDS:
         f"config._ENGINE_THRESHOLDS; known engines: {sorted(_ENGINE_THRESHOLDS)}"
     )
 _T = _ENGINE_THRESHOLDS[FACE_ENGINE]
+
+# --- ArcFace detector and recogniser ----------------------------------------
+# det_2.5g replaced det_10g after measuring both on tests/images: detection went
+# 237ms -> 67ms (3.5x, and detection was 44% of a 486ms request) while
+# recognition held - d-prime 8.09 against 8.20, ROC AUC, EER and rank-1
+# unchanged, worst-case margin slightly better at +0.222.  The recogniser is
+# the same w600k_r50 in both packs, so only the detector actually changed.
+#
+# The acceptance threshold moved 0.5 -> 0.45, and for a reason no accuracy
+# metric would have caught.  det_2.5g scores a small bystander face lower than
+# det_10g did: at 0.5 it stopped seeing the second person in
+# tests/images/g5.jpg altogether, which silently disables the held-photo
+# defence, because bystander evidence needs the bystander detected.  At 0.45 it
+# is found again and no extra faces appear anywhere across the 69 photos.
+#
+# That measurement rests on one photo with a genuine second person, so treat
+# 0.45 as provisional until more such photos exist.
+ARCFACE_DET_MODEL = os.getenv("FACE_ARCFACE_DET", "det_2.5g.onnx")
+ARCFACE_REC_MODEL = os.getenv("FACE_ARCFACE_REC", "w600k_r50.onnx")
+ARCFACE_DET_SIZE = _int("FACE_ARCFACE_DET_SIZE", 640)
+ARCFACE_MIN_DET_SCORE = _float("FACE_ARCFACE_MIN_DET_SCORE", 0.45)
 
 # onnxruntime sizes its intra-op thread pool from the HOST cpu count, not from
 # the cgroup limit, so four Swarm replicas each capped at cpus: "2" would each
@@ -140,7 +166,10 @@ LEGACY_QUALITY_GATES = _bool("FACE_LEGACY_QUALITY_GATES", False)
 # "model" - run the MiniFASNet weights in LIVENESS_MODEL_DIR
 #
 # Measured on tests/images against tests/images/spoof (69 live faces, 9 screen
-# photos): live scores ran 0.551-1.000, spoofs 0.000-0.0001, ROC AUC 1.0000.
+# photos) under the det_2.5g pipeline: live scores ran 0.536-1.000, spoofs all
+# 0.0000, ROC AUC 1.0000.  The live floor moved down slightly from 0.551 when
+# the detector changed - the crop MiniFASNet sees comes from the detector's box
+# - which is why this gets re-measured after any detector change.
 # On the strength of that it defaults to on - see tools/measure_liveness.py to
 # re-measure after any change to the crop, the detector or the weights.
 LIVENESS_MODE = os.getenv("FACE_LIVENESS_MODE", "model").strip().lower()
@@ -148,8 +177,8 @@ LIVENESS_MODEL_DIR = os.getenv(
     "FACE_LIVENESS_MODEL_DIR",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "liveness"),
 )
-# Chosen from the measured gap, not from the EER: spoofs scored at most 0.0001
-# while the hardest live face scored 0.551, so this sits well clear of both,
+# Chosen from the measured gap, not from the EER: spoofs scored 0.0000 while the
+# hardest live face scored 0.536, so this sits well clear of both,
 # with the headroom deliberately on the genuine side.  A refused live employee
 # retakes a photo; an accepted spoof records attendance that never happened, so
 # the two errors are not worth the same - but with spoofs this far from the
