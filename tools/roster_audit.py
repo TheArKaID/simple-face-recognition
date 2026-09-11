@@ -199,7 +199,10 @@ def audit_tenant(store, tenant_id):
         print("    one template to several took the worst genuine distance from")
         print("    0.368 to 0.326 and the worst margin from 0.274 to 0.288.")
 
-    return findings
+    # One database can hold several tenants, so a finding that does not name
+    # its own is unactionable - "someone is enrolled twice" is a different
+    # message from "24 is enrolled twice in PROD".
+    return [f"[{tenant_id}] {f}" for f in findings]
 
 
 def log_summary(db_path):

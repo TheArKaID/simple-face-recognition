@@ -51,6 +51,7 @@ coverage.xml
 .pytest_cache/
 cover/
 tests/images
+tests/new-images
 metrics_*.json
 
 # Translations
@@ -182,3 +183,7 @@ data/
 
 # ArcFace weights are fetched during the Docker build, not committed (184MB)
 models/arcface/
+
+# Employee enrolment photos are biometric data and never belong in git.
+# tools/bulk_enroll.py reads a directory like this one; keep it local.
+enroll-images/

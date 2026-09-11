@@ -56,6 +56,7 @@ def health():
                 "min_score": config.LIVENESS_MIN_SCORE,
                 "required": config.LIVENESS_REQUIRED,
             },
+            "max_templates_per_employee": config.MAX_TEMPLATES_PER_EMPLOYEE,
             "thresholds": {
                 "accept_max_distance": config.ACCEPT_MAX_DISTANCE,
                 "review_max_distance": config.REVIEW_MAX_DISTANCE,

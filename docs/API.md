@@ -170,8 +170,12 @@ else expires them.
 
 ## `GET /health`
 
-Returns store counts, liveness state and the active thresholds. Two fields are
-worth alerting on: `liveness.available` going `false`, and
+Returns store counts, liveness state, the active thresholds, and
+`max_templates_per_employee` — the cap on how many photos per employee are
+kept. Sending more than that to `/enroll` is not an error; the oldest are
+discarded, so the extra embedding work is simply thrown away.
+
+Two fields are worth alerting on: `liveness.available` going `false`, and
 `store.stale_templates` being non-zero — that means templates exist from a
 different model version and those employees cannot clock in until re-enrolled.
 
