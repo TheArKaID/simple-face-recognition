@@ -31,41 +31,33 @@ def _bool(name, default):
 # toolchain.
 FACE_ENGINE = os.getenv("FACE_ENGINE", "arcface-onnx").strip().lower()
 
-# Distance scales are per-engine and never interchangeable, so thresholds live
-# beside the engine that produced them.  Adding an engine means adding an entry
-# here and a module under engines/ - nothing else.
+# Distance scales belong to a VECTOR SPACE, not to a backend module, so that is
+# what these are keyed by.  Two pipelines that produce different embeddings need
+# different thresholds even when the same Python module drives them - which is
+# exactly what happens when FACE_ARCFACE_REC points at a quantised file.
 #
-# These come from tests/calibrate.py over tests/images (15 identities, 68 usable
-# photos) and are frozen in tests/baseline_*.json.  Env vars still win, and a
-# real deployment should retune from its own verify_log: a larger roster brings
-# impostors closer than any fixture set can.
+# Adding an engine means adding an entry here plus a module under engines/.
+# Adding a model variant means an entry here plus a line in _KNOWN_SPACES below.
+# A pairing with no entry refuses to start rather than borrowing another space's
+# numbers, because distances from a new model are on their own scale.
 _ENGINE_THRESHOLDS = {
-    # Cosine distance over 512 dims, range 0-2.  Measured on the det_2.5g
-    # pipeline: genuine 0.016-0.540, impostor 0.646-1.20, fully separated with a
-    # gap of 0.105.  The thresholds sit INSIDE that gap with headroom on both
-    # sides rather than hugging either edge.
+    # det_2.5g + w600k_r50, both FP32 - the buffalo_m pairing, and the default.
     #
-    # They moved when the detector changed.  Under det_10g the closest impostor
-    # was 0.677 and a review ceiling of 0.64 left 0.037 of room; under det_2.5g
-    # it is 0.646 and that same 0.64 left only 0.006.  Still correct on 15
-    # identities, but the closest impostor keeps falling as the roster grows, and
-    # once it drops under the ceiling an impostor lands in review - accepted with
-    # a flag - instead of rejected.  Hence 0.61.
-    "arcface-onnx": {
-        # Measured on tests/new-images: 30 identities, 10 photos each, 298
-        # usable photos giving 1,332 genuine and 42,921 impostor pairs.
-        # Genuine ran 0.053-0.435, impostor 0.543-1.182, gap +0.108, and the
-        # threshold sweep is clean at 0% both ways anywhere from 0.45 to 0.50.
-        #
-        # These are attendance selfies, which is the actual use case - the older
-        # tests/images fixture included deliberately extreme expressions that no
-        # one produces at a clock-in, and calibrating to those pushed the
-        # thresholds 0.09 too high.
-        #
-        # The bands sit INSIDE the measured gap: accept above the worst genuine
-        # pair with room, review below the closest impostor pair with room.  On
-        # this data the review band is empty, which is the point - it is
-        # headroom for faces harder than anything measured yet.
+    # Measured on tests/new-images: 30 identities, 10 photos each, 298 usable
+    # photos giving 1,332 genuine and 42,921 impostor pairs.  Genuine ran
+    # 0.053-0.435, impostor 0.543-1.182, gap +0.108, and the threshold sweep is
+    # clean at 0% both ways anywhere from 0.45 to 0.50.
+    #
+    # These are attendance selfies, which is the actual use case - the older
+    # tests/images fixture included deliberately extreme expressions that no one
+    # produces at a clock-in, and calibrating to those pushed the thresholds
+    # 0.09 too high.
+    #
+    # The bands sit INSIDE the measured gap: accept above the worst genuine pair
+    # with room, review below the closest impostor pair with room.  On this data
+    # the review band is empty, which is the point - it is headroom for faces
+    # harder than anything measured yet.
+    "insightface-buffalo-m": {
         "accept": 0.47,   # 0.035 above the worst genuine pair
         "review": 0.52,   # 0.023 below the closest impostor pair
         "margin": 0.10,
@@ -75,9 +67,27 @@ _ENGINE_THRESHOLDS = {
         # sweep shows no impostor pair accepted at all.
         "legacy": 0.47,
     },
-    # A recogniser-free double for the offline suites, and the smallest
-    # complete example of the backend contract.
-    "stub": {
+    # The same pair with the recogniser quantised to INT8: 2.43x faster end to
+    # end (337ms -> 138ms) at the cost of separation, gap 0.108 -> 0.092.  Both
+    # bands shift up together because the worst genuine pair moves to 0.471,
+    # past the FP32 accept line.  Measured at these values on tests/new-images:
+    # 268 genuine attempts accepted with none flagged, 7,772 impostor attempts
+    # all rejected.
+    #
+    # Not the default.  What it spends is gap, and gap is a minimum over ~N^2/2
+    # pairs, so it shrinks on its own as the roster grows.  Latency can also be
+    # bought with hardware; separation cannot be bought back.
+    "insightface-buffalo-m-rec-int8": {
+        "accept": 0.50,
+        "review": 0.54,
+        "margin": 0.10,
+        "blur": 10.0,
+        "legacy": 0.50,
+    },
+    # A recogniser-free double for the offline suites, and the smallest complete
+    # example of the backend contract.  Must match engines/stub_backend.py's
+    # ENGINE_ID; engine.py asserts that they agree.
+    "stub-v1": {
         "accept": 0.55,
         "review": 0.64,
         "margin": 0.10,
@@ -85,12 +95,6 @@ _ENGINE_THRESHOLDS = {
         "legacy": 0.60,
     },
 }
-if FACE_ENGINE not in _ENGINE_THRESHOLDS:
-    raise RuntimeError(
-        f"FACE_ENGINE={FACE_ENGINE!r} has no thresholds. Add an entry to "
-        f"config._ENGINE_THRESHOLDS; known engines: {sorted(_ENGINE_THRESHOLDS)}"
-    )
-_T = _ENGINE_THRESHOLDS[FACE_ENGINE]
 
 # --- ArcFace detector and recogniser ----------------------------------------
 # det_2.5g replaced det_10g after measuring both on tests/images: detection went
@@ -112,6 +116,79 @@ ARCFACE_DET_MODEL = os.getenv("FACE_ARCFACE_DET", "det_2.5g.onnx")
 ARCFACE_REC_MODEL = os.getenv("FACE_ARCFACE_REC", "w600k_r50.onnx")
 ARCFACE_DET_SIZE = _int("FACE_ARCFACE_DET_SIZE", 640)
 ARCFACE_MIN_DET_SCORE = _float("FACE_ARCFACE_MIN_DET_SCORE", 0.45)
+
+# --- which vector space are these embeddings in? -----------------------------
+# ENGINE_ID names the space, and store.py refuses to compare templates across
+# ids.  That promise only holds if the id follows the models, and it used to
+# not: it was a hard-coded constant in engines/arcface_onnx.py while the model
+# files came from env vars.  Pointing FACE_ARCFACE_REC at a quantised file
+# therefore produced different embeddings under the SAME id, and the store
+# compared them against FP32 templates without complaint.
+#
+# Measured on tests/new-images, that mix gave a separation gap of +0.082,
+# against +0.108 for FP32 throughout and +0.092 for INT8 throughout: worse than
+# either consistent choice, and still positive.  So nothing errors and nothing
+# fails - attendance keeps working, quietly closer to the edge.  A crash
+# announces itself; this does not.  That is the failure this derivation exists
+# to prevent.
+#
+# The detector counts as much as the recogniser.  It supplies the five landmarks
+# the alignment is fitted to, so different landmarks mean a different crop and a
+# different embedding: quantising only the detector moved the gap 0.108 -> 0.084,
+# more than quantising only the recogniser did.
+_KNOWN_SPACES = {
+    ("det_10g.onnx", "w600k_r50.onnx"): "insightface-buffalo-l",
+    ("det_2.5g.onnx", "w600k_r50.onnx"): "insightface-buffalo-m",
+    ("det_2.5g.onnx", "w600k_r50_int8.onnx"): "insightface-buffalo-m-rec-int8",
+    ("det_2.5g_int8.onnx", "w600k_r50.onnx"): "insightface-buffalo-m-det-int8",
+    ("det_2.5g_int8.onnx", "w600k_r50_int8.onnx"): "insightface-buffalo-m-int8",
+}
+_DEFAULT_DET_SIZE = 640
+
+
+def _vector_space_id(det, rec, det_size):
+    """Name the space that this detector/recogniser pairing embeds into.
+
+    An unfamiliar pairing gets a derived name rather than a familiar one, so it
+    is isolated from every stored template.  Failing towards isolation is the
+    safe direction: a template that cannot be read costs a re-enrol, while a
+    template read in the wrong space costs a wrong answer nobody sees.
+    """
+    name = _KNOWN_SPACES.get((det, rec))
+    if name is None:
+        strip = lambda f: f[:-5] if f.endswith(".onnx") else f  # noqa: E731
+        name = f"insightface-{strip(det)}+{strip(rec)}"
+    # The letterbox size feeds the detector, so it moves the landmarks too - a
+    # different one is a different space even with identical weights.
+    if det_size != _DEFAULT_DET_SIZE:
+        name = f"{name}-det{det_size}"
+    return name
+
+
+# The stub owns its id outright; engine.py checks that the backend agrees with
+# whatever is decided here, so the two can never drift apart unnoticed.
+if FACE_ENGINE == "arcface-onnx":
+    ENGINE_ID = _vector_space_id(
+        ARCFACE_DET_MODEL, ARCFACE_REC_MODEL, ARCFACE_DET_SIZE
+    )
+elif FACE_ENGINE == "stub":
+    ENGINE_ID = "stub-v1"
+else:
+    raise RuntimeError(
+        f"FACE_ENGINE={FACE_ENGINE!r} has no vector-space id. Add one here and "
+        f"a module under engines/; see engine.py for the backend contract."
+    )
+
+if ENGINE_ID not in _ENGINE_THRESHOLDS:
+    raise RuntimeError(
+        f"no thresholds for vector space {ENGINE_ID!r} (FACE_ENGINE="
+        f"{FACE_ENGINE!r}, detector={ARCFACE_DET_MODEL!r}, recogniser="
+        f"{ARCFACE_REC_MODEL!r}, det_size={ARCFACE_DET_SIZE}). Distances from a "
+        f"new pairing are on their own scale and cannot borrow another space's "
+        f"numbers, so run tests/calibrate.py against it and add an entry to "
+        f"config._ENGINE_THRESHOLDS. Known spaces: {sorted(_ENGINE_THRESHOLDS)}"
+    )
+_T = _ENGINE_THRESHOLDS[ENGINE_ID]
 
 # onnxruntime sizes its intra-op thread pool from the HOST cpu count, not from
 # the cgroup limit, so four Swarm replicas each capped at cpus: "2" would each

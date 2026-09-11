@@ -12,10 +12,14 @@ The contract a backend must honour:
 
   ENGINE_ID       names the vector space.  Stored with every template, so a
                   model change cannot silently mix incompatible vectors - the
-                  store simply stops seeing templates from other engines.  Two
-                  backends computing identical vectors may share an id;
-                  engines/arcface_onnx.py does, and tools/compare_backends.py
-                  is what earns it the right to.
+                  store simply stops seeing templates from other spaces.  It
+                  must cover everything that shapes the embedding, not just the
+                  module: engines/arcface_onnx.py takes its id from
+                  config._vector_space_id, which derives it from the detector
+                  and recogniser files, because swapping a model file changes
+                  the vectors while leaving the module name untouched.  Two
+                  backends computing identical vectors may share an id, and
+                  tools/compare_backends.py is what earns them the right to.
   EMBEDDING_DIM   length of the vectors it produces.
   embed(image, quality_gates=True)
                   returns a FaceResult, or raises FaceError with one of the
@@ -54,6 +58,19 @@ if config.FACE_ENGINE not in _BACKENDS:
     )
 
 _backend = importlib.import_module(_BACKENDS[config.FACE_ENGINE])
+
+# The thresholds were picked for one vector space and the templates were stored
+# under one id, so the backend and config must name the same space.  They are
+# derived separately - config from the model filenames, the backend from itself
+# - and a disagreement would mean decisions made with another space's numbers,
+# which no test would fail on.  Cheaper to refuse to start.
+if _backend.ENGINE_ID != config.ENGINE_ID:
+    raise RuntimeError(
+        f"backend {_BACKENDS[config.FACE_ENGINE]} reports ENGINE_ID "
+        f"{_backend.ENGINE_ID!r} but config derived {config.ENGINE_ID!r}. "
+        f"Thresholds and stored templates key off the id, so these must agree; "
+        f"check config._KNOWN_SPACES against the backend."
+    )
 
 ENGINE_ID = _backend.ENGINE_ID
 EMBEDDING_DIM = _backend.EMBEDDING_DIM

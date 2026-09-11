@@ -9,6 +9,7 @@ cross-check - is the real code.
 Liveness has its own coverage in test_api.py and tools/measure_liveness.py.
 """
 import os
+import subprocess
 import sys
 import tempfile
 
@@ -252,6 +253,49 @@ reopened = TemplateStore(DB)
 check("templates survive reopen", reopened.index("T1").size >= 3, str(reopened.index("T1").size))
 check("stats reports engine", reopened.stats()["engine_id"] == engine.ENGINE_ID)
 check("no stale templates", reopened.stats()["stale_templates"] == 0)
+
+print("\n== vector space isolation ==")
+# The id has to follow the models, not the module.  When it was a constant,
+# pointing FACE_ARCFACE_REC at a quantised file produced different embeddings
+# under the same id, and store.py compared them against FP32 templates happily.
+# Measured, that mix ran at a separation gap of +0.082 against +0.108 - worse
+# than either consistent choice, still positive, so nothing ever raised.
+space = config._vector_space_id
+FP32 = ("det_2.5g.onnx", "w600k_r50.onnx", 640)
+check("default pairing keeps its historical id",
+      space(*FP32) == "insightface-buffalo-m", space(*FP32))
+check("quantised recogniser is a different space",
+      space("det_2.5g.onnx", "w600k_r50_int8.onnx", 640) != space(*FP32))
+check("quantised detector is a different space too",
+      space("det_2.5g_int8.onnx", "w600k_r50.onnx", 640) != space(*FP32))
+check("detector letterbox size is part of the space",
+      space("det_2.5g.onnx", "w600k_r50.onnx", 320) != space(*FP32))
+unknown = space("det_future.onnx", "w600k_future.onnx", 640)
+check("an unfamiliar pairing gets a derived id, not a familiar one",
+      unknown not in (space(*FP32), "insightface-buffalo-l"), unknown)
+check("the running space has thresholds",
+      config.ENGINE_ID in config._ENGINE_THRESHOLDS, config.ENGINE_ID)
+check("engine and config agree on the space",
+      engine.ENGINE_ID == config.ENGINE_ID, engine.ENGINE_ID)
+
+# A pairing nobody calibrated must refuse to start rather than borrow another
+# space's numbers.  Run in a subprocess because config reads env at import.
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_proc = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, %r); import config" % _root],
+    # FACE_ENGINE is named explicitly: this suite runs on the stub, whose
+    # space is fixed, so an inherited FACE_ENGINE would skip the pairing
+    # check entirely and the test would pass without testing anything.
+    env=dict(os.environ, FACE_ENGINE="arcface-onnx",
+             FACE_ARCFACE_REC="w600k_r50_int8.onnx",
+             FACE_ARCFACE_DET="det_2.5g_int8.onnx"),
+    capture_output=True, text=True)
+check("uncalibrated pairing refuses to start", _proc.returncode != 0,
+      f"exit {_proc.returncode}")
+check("and names the space it could not price",
+      "no thresholds for vector space" in _proc.stderr,
+      (_proc.stderr.strip()[-110:] if _proc.stderr else "(no stderr)"))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

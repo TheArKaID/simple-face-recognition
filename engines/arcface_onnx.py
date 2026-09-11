@@ -43,15 +43,18 @@ from engines.common import (
     select_subject,
 )
 
-# det_2.5g + w600k_r50 is exactly the pairing in the buffalo_m pack, hence the
-# id.  It differs from "insightface-buffalo-l" (det_10g plus the same
-# recogniser) only in the detector - but a different detector means different
-# five-point landmarks, a different affine alignment, and therefore a different
-# embedding.  Measured drift against the det_10g pipeline was under 0.052 on 68
-# of 69 photos and 0.153 on one hard image, against an impostor margin of 0.10:
-# small, but not nothing.  So the id changes, and templates from the old
-# pipeline are correctly treated as stale rather than quietly compared against.
-ENGINE_ID = "insightface-buffalo-m"
+# The id names the vector space, and config derives it from the detector and
+# recogniser actually loaded - see _vector_space_id there.  It is NOT a constant
+# here, and the difference matters: when it was one, pointing FACE_ARCFACE_REC
+# at a quantised file produced different embeddings under the same id, and
+# store.py compared them against FP32 templates without complaint.
+#
+# Both models feed the id, because both shape the embedding.  A different
+# detector means different five-point landmarks, a different affine alignment
+# and therefore a different vector - measured drift from det_10g to det_2.5g was
+# under 0.052 on 68 of 69 photos and 0.153 on one hard image, against an
+# impostor margin of 0.10: small, but not nothing.
+ENGINE_ID = config.ENGINE_ID
 EMBEDDING_DIM = 512
 
 # Two files out of the buffalo_m pack, fetched during the build rather than
