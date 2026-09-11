@@ -200,7 +200,7 @@ Branch on these, not on `message`.
 | `face_too_small` | Face narrower than the minimum width in pixels |
 | `low_quality_blur` | Out of focus |
 | `low_quality_dark` / `low_quality_bright` | Under- or over-exposed |
-| `invalid_image` | Not decodable as base64 image data |
+| `invalid_image` | The payload did not decode to a readable image. `errors` names the cause: whitespace where `+` should be (form encoding), URL-safe `-`/`_`, base64 applied twice, HEIC from an iPhone, or a file that is not an image at all |
 | `too_many_faces` | More people in frame than allowed |
 | `ambiguous_subject` | Two faces of similar size — who is presenting is unclear |
 | `multiple_faces` | More than one face, when bystanders are disallowed entirely |
