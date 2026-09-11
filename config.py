@@ -52,13 +52,28 @@ _ENGINE_THRESHOLDS = {
     # once it drops under the ceiling an impostor lands in review - accepted with
     # a flag - instead of rejected.  Hence 0.61.
     "arcface-onnx": {
-        "accept": 0.56,   # 0.020 above the worst genuine pair
-        "review": 0.61,   # 0.036 below the closest impostor pair
+        # Measured on tests/new-images: 30 identities, 10 photos each, 298
+        # usable photos giving 1,332 genuine and 42,921 impostor pairs.
+        # Genuine ran 0.053-0.435, impostor 0.543-1.182, gap +0.108, and the
+        # threshold sweep is clean at 0% both ways anywhere from 0.45 to 0.50.
+        #
+        # These are attendance selfies, which is the actual use case - the older
+        # tests/images fixture included deliberately extreme expressions that no
+        # one produces at a clock-in, and calibrating to those pushed the
+        # thresholds 0.09 too high.
+        #
+        # The bands sit INSIDE the measured gap: accept above the worst genuine
+        # pair with room, review below the closest impostor pair with room.  On
+        # this data the review band is empty, which is the point - it is
+        # headroom for faces harder than anything measured yet.
+        "accept": 0.47,   # 0.035 above the worst genuine pair
+        "review": 0.52,   # 0.023 below the closest impostor pair
         "margin": 0.10,
         "blur": 10.0,
-        # /compare-fr has no review band and no roster to cross-check against,
-        # so it needs one line: the midpoint of the measured gap.
-        "legacy": 0.59,
+        # /compare-fr is being retired and has no 1:N cross-check behind it, so
+        # it gets the strictest line rather than the most permissive: at 0.47 the
+        # sweep shows no impostor pair accepted at all.
+        "legacy": 0.47,
     },
     # A recogniser-free double for the offline suites, and the smallest
     # complete example of the backend contract.
