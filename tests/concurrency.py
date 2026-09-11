@@ -198,22 +198,31 @@ for r in results:
 for base, ms in sorted(per_base.items()):
     print(f"    {base}: n={len(ms)} p50 {statistics.median(ms):.0f} ms")
 
-# Queueing is expected and fine; a blowup past it means thread oversubscription
-# or lock convoy rather than honest queueing.
+# There is no closed-form budget here, and two attempts at one were both wrong.
 #
-# The budget is the queue depth each instance actually sees - concurrent callers
-# spread over the instances - times the unloaded cost of one request, with 1.5x
-# of slack.  An earlier version used `len(BASES) * 3`, which had the scaling
-# backwards: it granted MORE latency budget the more instances were sharing the
-# load, and ignored the concurrency level entirely.  Against a single instance
-# at 8 concurrent callers it demanded 3x where honest serialisation alone costs
-# 8x, so it failed a system that was behaving correctly.
-queue_depth = WORKERS / len(BASES)
-budget = solo_median * queue_depth * 1.5
-check("latency degrades proportionally, not pathologically",
-      p50 < budget,
-      f"p50 {p50:.0f} ms vs budget {budget:.0f} ms "
-      f"({solo_median:.0f} ms unloaded x {queue_depth:.1f} queued x 1.5)")
+# The first scaled the allowance by `len(BASES) * 3`, which had it backwards:
+# more instances sharing the load bought MORE latency allowance, and the
+# concurrency level was ignored entirely.  The second used the per-instance
+# queue depth, WORKERS / len(BASES), which assumes each instance has its own
+# CPU.  Measured on one host with four replicas, that is false: every replica
+# saturated its 2-CPU limit at ~200% while the machine served 8 CPU-equivalents
+# total, so 4x the replicas returned 2.3x the throughput (1.5 -> 3.4 req/s) and
+# a single request was slower than its unloaded cost even at queue depth 1.
+# Replicas on one machine do not have independent capacity, so no per-instance
+# queueing model can hold.
+#
+# What is left is the operational question rather than a ratio: does a clock-in
+# finish fast enough to be usable, and does anything come back broken?  The
+# correctness checks above carry the pathology signal - a lock convoy shows up
+# as 'database is locked' or a 5xx, not as a slow percentile.  Scaling is
+# reported for comparison across runs and deliberately not asserted, because a
+# laptop under other load cannot support that claim.
+ceiling = float(os.getenv('CONC_P95_CEILING_MS', 10000))
+print(f"  scaling: {len(times) / wall:.1f} req/s across {len(BASES)} instance(s), p50 {p50 / solo_median:.1f}x unloaded")
+check("p95 latency within the operational ceiling",
+      p95 < ceiling,
+      f"p95 {p95:.0f} ms vs ceiling {ceiling:.0f} ms "
+      f"(set CONC_P95_CEILING_MS to match your clock-in budget)")
 
 print("\n== cleanup ==")
 for ident, _ in enrolled:
