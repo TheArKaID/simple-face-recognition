@@ -1,0 +1,21 @@
+The .onnx files in this directory are format conversions of the MiniFASNet
+anti-spoofing weights from Silent-Face-Anti-Spoofing.
+
+    Silent-Face-Anti-Spoofing
+    Copyright (c) 2020 MiniVision (minivision-ai)
+    https://github.com/minivision-ai/Silent-Face-Anti-Spoofing
+    Licensed under the Apache License, Version 2.0
+
+Derived files and their upstream sources:
+
+    2.7_80x80_MiniFASNetV2.onnx      <- 2.7_80x80_MiniFASNetV2.pth
+    4_0_0_80x80_MiniFASNetV1SE.onnx  <- 4_0_0_80x80_MiniFASNetV1SE.pth
+
+Converted by tools/convert_minifas.py. The conversion changes the container
+format only. The weights, the network architecture, the two-scale crop (2.7x
+and 4.0x of the face box, resized to 80x80) and the summed softmax outputs are
+all upstream's work, and liveness.py reproduces their preprocessing rather than
+reinventing it - including the detail that their ToTensor is their own class and
+does NOT rescale pixels to 0-1.
+
+A verbatim copy of the Apache License 2.0 is in ./LICENSE.
