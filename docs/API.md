@@ -181,10 +181,14 @@ else expires them.
 
 ## `GET /health`
 
-Returns store counts, liveness state, the active thresholds, and
+Returns store counts, liveness state, the active thresholds,
 `max_templates_per_employee` — the cap on how many photos per employee are
-kept. Sending more than that to `/enroll` is not an error; the oldest are
-discarded, so the extra embedding work is simply thrown away.
+kept (sending more to `/enroll` is not an error; the oldest are discarded) —
+and `auto_update`: whether templates refresh themselves from clean clock-ins,
+the minimum days between refreshes, and the margin a decision needs to clear
+before it counts as clean enough to trust. Check this after any deploy that
+changes auto-update's env vars — it is the only way to confirm the setting
+that actually took effect, since it never shows up in a response body.
 
 Two fields are worth alerting on: `liveness.available` going `false`, and
 `store.stale_templates` being non-zero — that means templates exist from a

@@ -58,6 +58,11 @@ def health():
                 "required": config.LIVENESS_REQUIRED,
             },
             "max_templates_per_employee": config.MAX_TEMPLATES_PER_EMPLOYEE,
+            "auto_update": {
+                "enabled": config.AUTO_UPDATE_ENABLED,
+                "interval_days": config.AUTO_UPDATE_INTERVAL_DAYS,
+                "min_margin": config.AUTO_UPDATE_MIN_MARGIN,
+            },
             "thresholds": {
                 "accept_max_distance": config.ACCEPT_MAX_DISTANCE,
                 "review_max_distance": config.REVIEW_MAX_DISTANCE,
