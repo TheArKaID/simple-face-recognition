@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -27,6 +28,7 @@ import engine           # noqa: E402
 import matcher          # noqa: E402
 from engines.stub_backend import STATE  # noqa: E402
 from store import TemplateStore  # noqa: E402
+import auto_update      # noqa: E402
 
 DIM = engine.EMBEDDING_DIM
 
@@ -297,6 +299,49 @@ check("and names the space it could not price",
       "no thresholds for vector space" in _proc.stderr,
       (_proc.stderr.strip()[-110:] if _proc.stderr else "(no stderr)"))
 
+print("\n== auto_update gates ==")
+# Pure functions, no DB or HTTP needed - the gate logic is worth testing on
+# its own, separately from whether main.py wires it in correctly.
+Clean = lambda margin: matcher.Decision(decision="accept", margin=margin, reasons=[])
+check("clean accept above the margin bar is eligible",
+      auto_update.eligible(Clean(config.AUTO_UPDATE_MIN_MARGIN + 0.01)))
+check("clean accept AT the margin bar is eligible (>=, not >)",
+      auto_update.eligible(Clean(config.AUTO_UPDATE_MIN_MARGIN)))
+check("accept just under the margin bar is not eligible",
+      not auto_update.eligible(Clean(config.AUTO_UPDATE_MIN_MARGIN - 0.001)))
+check("review is never eligible, regardless of margin",
+      not auto_update.eligible(
+          matcher.Decision(decision="review", margin=1.0, reasons=["low_margin"])))
+check("reject is never eligible",
+      not auto_update.eligible(
+          matcher.Decision(decision="reject", margin=-0.1, reasons=["identity_mismatch"])))
+check("an accept carrying any reason is not eligible (e.g. a bystander in frame)",
+      not auto_update.eligible(
+          matcher.Decision(decision="accept", margin=1.0,
+                           reasons=["extra_faces_present"])))
+check("a margin of None is not eligible (no impostor population to compare against)",
+      not auto_update.eligible(matcher.Decision(decision="accept", margin=None)))
+
+_now = datetime.now(timezone.utc)
+check("no prior template is not due (nothing to compare against yet)",
+      not auto_update.due(None))
+check("an empty timestamp is not due",
+      not auto_update.due(""))
+check("an unparsable timestamp is not due (fail closed, not open)",
+      not auto_update.due("not-a-timestamp"))
+check("updated yesterday is not due",
+      not auto_update.due((_now - timedelta(days=1)).isoformat()))
+check("updated one day short of the interval is not due",
+      not auto_update.due((_now - timedelta(days=config.AUTO_UPDATE_INTERVAL_DAYS - 1)).isoformat()))
+check("updated exactly the interval ago is due",
+      auto_update.due((_now - timedelta(days=config.AUTO_UPDATE_INTERVAL_DAYS, minutes=1)).isoformat()))
+check("updated well past the interval is due",
+      auto_update.due((_now - timedelta(days=config.AUTO_UPDATE_INTERVAL_DAYS * 3)).isoformat()))
+check("a naive (tz-less) timestamp is still handled",
+      auto_update.due((_now - timedelta(days=config.AUTO_UPDATE_INTERVAL_DAYS * 2))
+                      .replace(tzinfo=None).isoformat()))
+
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     print("FAILED: " + ", ".join(FAIL))

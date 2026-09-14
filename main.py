@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+import auto_update
 import config
 import engine
 import liveness
@@ -234,6 +235,19 @@ def verify(request: VerifyRequest):
             f"Call POST /enroll for {request.employee_id} first",
         )
 
+    # Auto re-enrolment: fold this probe into the template set if the accept
+    # was clean and enough time has passed.  Never affects the response - a
+    # skipped or failed refresh is not a verification failure; see
+    # auto_update.py and store.auto_update_template() for why each gate
+    # exists.
+    if auto_update.eligible(decision):
+        last = store.last_template_update(request.tenant_id, request.employee_id)
+        if auto_update.due(last):
+            store.auto_update_template(
+                request.tenant_id, request.employee_id,
+                probe.embedding, probe.quality(),
+            )
+
     data = decision.public_data()
     data["quality"] = probe.quality()
     data["liveness"] = live.public_data() if live else None

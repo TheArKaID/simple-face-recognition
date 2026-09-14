@@ -92,6 +92,17 @@ whoever uploaded the photo so they can replace it. `422` means none were usable.
 no template yet, that photo is enrolled on the spot. Stop sending it once
 everyone is enrolled.
 
+**Templates also refresh themselves, quietly.** When a clock-in scores a clean
+accept — no bystander in frame, no borderline distance, and a margin clearly
+above the minimum, not just enough to avoid `review` — that photo is folded
+into the employee's rolling template set (still capped at 5, oldest dropped),
+but no more often than once every `FACE_AUTO_UPDATE_INTERVAL_DAYS` (30 by
+default). This never affects the response — a skipped or failed refresh looks
+identical to a normal accept. It exists because a template frozen at enrolment
+time drifts away from a real face over months (haircut, glasses, weight), and
+nothing else in this API keeps it current. Turn it off with
+`FACE_AUTO_UPDATE=false` if that trade-off is not wanted.
+
 ```json
 {
   "status": "success",

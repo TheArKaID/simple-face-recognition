@@ -28,6 +28,7 @@ calibration decision for a person, taken with tests/calibrate.py.
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -69,7 +70,7 @@ def pct(values, q):
     return float(np.percentile(values, q)) if len(values) else float("nan")
 
 
-def audit_tenant(store, tenant_id):
+def audit_tenant(store, tenant_id, db_path):
     """Report one tenant's roster; returns the findings it produced."""
     index = store.index(tenant_id)
     ids, mat = index.employee_ids, index.matrix
@@ -189,6 +190,47 @@ def audit_tenant(store, tenant_id):
             f"at different times."
         )
 
+    # Freshness: how long since each employee's newest template was written.
+    # A template only gets rewritten by POST /enroll or by an auto-update (see
+    # auto_update.py) firing at most once every AUTO_UPDATE_INTERVAL_DAYS, so
+    # an old newest-template date is not itself a problem - it may simply mean
+    # no clock-in has yet cleared the bar auto-update requires.  Flagged only
+    # once it is old enough that staleness, not scheduling, is the likely cause.
+    conn = read_only(db_path)
+    try:
+        freshness = dict(conn.execute(
+            "SELECT employee_id, MAX(created_at) FROM face_template "
+            "WHERE tenant_id = ? AND engine_id = ? GROUP BY employee_id",
+            (tenant_id, engine.ENGINE_ID),
+        ).fetchall())
+    finally:
+        conn.close()
+    stale_cutoff = 2 * config.AUTO_UPDATE_INTERVAL_DAYS
+    stale = []
+    for emp in roster:
+        newest = freshness.get(emp)
+        if not newest:
+            continue
+        try:
+            last = datetime.fromisoformat(newest)
+        except ValueError:
+            continue
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - last).total_seconds() / 86400
+        if age_days >= stale_cutoff:
+            stale.append((emp, age_days))
+    if stale:
+        stale.sort(key=lambda x: -x[1])
+        shown = ", ".join(f"{e} ({int(d)}d)" for e, d in stale[:6])
+        findings.append(
+            f"{len(stale)} employee(s) have not had a template refresh in over "
+            f"{stale_cutoff} days ({shown}). Auto-update only fires from a clean, "
+            f"confident accept - if someone rarely produces one (camera angle, "
+            f"lighting, or a genuinely changed appearance), they will not "
+            f"self-refresh. Worth a manual re-enrolment."
+        )
+
     singles = [emp for _, emp, n, _, _, _ in rows if n == 1]
     if singles:
         shown = ", ".join(singles[:8]) + (" ..." if len(singles) > 8 else "")
@@ -282,7 +324,7 @@ if not names:
         print("  those employees need re-enrolling before they can clock in.")
 else:
     for tenant_id in names:
-        all_findings += audit_tenant(store, tenant_id)
+        all_findings += audit_tenant(store, tenant_id, db)
 
 all_findings += log_summary(db)
 

@@ -221,6 +221,48 @@ CROSS_CHECK_ENABLED = _bool("FACE_CROSS_CHECK", True)
 # narrows as headcount grows, and the check costs one matrix multiply.
 MIN_IMPOSTOR_MARGIN = _float("FACE_MIN_IMPOSTOR_MARGIN", _T["margin"])
 
+# --- Auto re-enrolment from clean attendance photos --------------------------
+# /verify never used to write anything back to a template: an employee's face
+# was frozen at whatever POST /enroll last sent, however old that got.  This
+# closes that gap by quietly folding a probe into the template store when its
+# own accept was unambiguous - reusing the same trim-to-newest-N that enroll()
+# already does, so this needs no new storage logic, only a gate on when to call
+# it.  See auto_update.py for the gate itself.
+#
+# Two designs were rejected in favour of this one.  A background timer needs a
+# leader among however many Swarm replicas are running, or all of them redo the
+# same sweep; it also lives in process memory, so a restart - which happens
+# routinely from a rolling update or a health-check failure - silently resets
+# the clock.  Checking "was this employee's newest template updated recently
+# enough" against a column that already exists (face_template.created_at) has
+# neither problem: any replica can make the call correctly because the clock
+# lives in the database, not in a process.
+#
+# Gating matters for two reasons, not one.  It throttles TEMPLATE DRIFT - each
+# auto-update becomes the basis future accepts are judged against, so updating
+# on every accept lets a run of borderline-but-passing photos walk the template
+# away from the enrolled face fastest.  It also shrinks the ATTACK WINDOW: an
+# attacker who manages one lucky accept only gets to feed the template on the
+# day the gate happens to be open, not on every subsequent success.  A monthly
+# interval trades slower recognition of a real appearance change (a new
+# haircut, glasses) for both of those; a weekly interval is the middle ground.
+#
+# The rolling window is simple on purpose: enroll() keeps this employee's
+# newest FACE_MAX_TEMPLATES rows and drops the rest, with no distinction
+# between a template that came from POST /enroll and one that came from here.
+# Given enough auto-updates and no manual re-enrolment, all of them could end
+# up auto-derived.  That trade was made deliberately for simplicity - a
+# protected "anchor" template would need a schema change (a source column) and
+# trimming logic that skips it - and can be added later if drift ever shows up
+# in tests/calibrate.py or tools/roster_audit.py.
+AUTO_UPDATE_ENABLED = _bool("FACE_AUTO_UPDATE", True)
+AUTO_UPDATE_INTERVAL_DAYS = _int("FACE_AUTO_UPDATE_INTERVAL_DAYS", 30)
+# Deliberately above MIN_IMPOSTOR_MARGIN, not equal to it: a margin that only
+# just avoids "low_margin" is exactly the case drift risk concentrates in, so
+# the bar to let a probe influence future decisions sits higher than the bar to
+# accept attendance from it.
+AUTO_UPDATE_MIN_MARGIN = _float("FACE_AUTO_UPDATE_MIN_MARGIN", 2 * MIN_IMPOSTOR_MARGIN)
+
 # --- Subject selection -------------------------------------------------------
 # A colleague wandering into frame should not block attendance, but the face
 # that gets verified must still be the one presenting.  The subject is the

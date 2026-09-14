@@ -7,6 +7,8 @@ Face verification for employee attendance. HRIS integration contract:
 Run `python tools/roster_audit.py` after each enrolment round — separation
 between employees narrows as the roster grows, and it names the closest pair.
 
+Templates also refresh themselves from clean, confident clock-ins (see `FACE_AUTO_UPDATE*` in `config.py`) — no more than once a month per employee, and never from a borderline or reviewed match.
+
 ## Docker Swarm
 
 ```sh

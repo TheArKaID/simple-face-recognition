@@ -13,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -176,6 +176,46 @@ class TemplateStore:
             self._conn.commit()
             self._index_cache.pop(tenant_id, None)
             return self.template_count(tenant_id, employee_id)
+
+    def last_template_update(self, tenant_id: str, employee_id: str) -> Optional[str]:
+        """MAX(created_at) among this employee's current-engine templates.
+
+        None means no template exists yet in this vector space - either never
+        enrolled, or stale after an engine change.  auto_update.due() treats
+        that as "not due", which is correct: eligible() only calls this after
+        matcher.verify() already found a match against the claimed employee,
+        so a None here would mean the index and this query disagree, not that
+        a refresh is overdue.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MAX(created_at) FROM face_template "
+                "WHERE tenant_id = ? AND employee_id = ? AND engine_id = ?",
+                (tenant_id, employee_id, engine.ENGINE_ID),
+            ).fetchone()
+            return row[0] if row else None
+
+    def auto_update_template(
+        self, tenant_id: str, employee_id: str, embedding: np.ndarray, quality: dict
+    ) -> bool:
+        """Fold one clean-accept probe into an employee's rolling template set.
+
+        Reuses enroll()'s existing trim-to-newest-N rather than any new storage
+        logic - replace=False appends, then the same DELETE that already runs
+        on every enroll() call drops the oldest until at most
+        MAX_TEMPLATES_PER_EMPLOYEE remain.  auto_update.py decides WHEN this is
+        worth calling; this method only does it, and never raises while doing
+        so - the same rule log_verification follows, for the same reason: a
+        missed monthly refresh costs nothing an otherwise-successful clock-in
+        should pay for.
+        """
+        try:
+            self.enroll(tenant_id, employee_id, [(embedding, quality)], replace=False)
+            return True
+        except Exception as exc:              # noqa: BLE001 - deliberately broad
+            print(f"auto-update write failed ({type(exc).__name__}: {exc}); "
+                  f"tenant={tenant_id} employee={employee_id}")
+            return False
 
     def delete_employee(self, tenant_id: str, employee_id: str) -> int:
         with self._lock:
